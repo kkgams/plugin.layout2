@@ -1,0 +1,256 @@
+{
+  "plugins": [
+    "https://github.com/kkgams/plugin.fs/releases/download/v0.2.0/plugin.fs.wasm",
+    "build.nosync/plugin.layout2.wasm"
+  ],
+  "ui": {
+    "keys": [
+      {
+        "key": "mod+alt+enter",
+        "call": [
+          "ui.layout.create",
+          {
+            "side": "right"
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+shift+enter",
+        "call": [
+          "ui.layout.create",
+          {
+            "side": "down"
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+w",
+        "call": [
+          "ui.layout.close"
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+left",
+        "call": [
+          "ui.layout.focusDirection",
+          {
+            "side": "left"
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+shift+left",
+        "call": [
+          "ui.layout.moveDirection",
+          {
+            "side": "left"
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+shift+h",
+        "call": [
+          "ui.layout.resize",
+          {
+            "side": "left",
+            "delta": 24
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+right",
+        "call": [
+          "ui.layout.focusDirection",
+          {
+            "side": "right"
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+shift+right",
+        "call": [
+          "ui.layout.moveDirection",
+          {
+            "side": "right"
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+shift+l",
+        "call": [
+          "ui.layout.resize",
+          {
+            "side": "right",
+            "delta": 24
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+up",
+        "call": [
+          "ui.layout.focusDirection",
+          {
+            "side": "up"
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+shift+up",
+        "call": [
+          "ui.layout.moveDirection",
+          {
+            "side": "up"
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+shift+k",
+        "call": [
+          "ui.layout.resize",
+          {
+            "side": "up",
+            "delta": 24
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+down",
+        "call": [
+          "ui.layout.focusDirection",
+          {
+            "side": "down"
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+shift+down",
+        "call": [
+          "ui.layout.moveDirection",
+          {
+            "side": "down"
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+shift+j",
+        "call": [
+          "ui.layout.resize",
+          {
+            "side": "down",
+            "delta": 24
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+e",
+        "call": [
+          "ui.layout.equalize"
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+g",
+        "call": [
+          "ui.layout.arrange",
+          {
+            "kind": "grid"
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+t",
+        "call": [
+          "ui.layout.workspaceCreate"
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+]",
+        "call": [
+          "ui.layout.workspaceNext",
+          {
+            "delta": 1
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+alt+[",
+        "call": [
+          "ui.layout.workspaceNext",
+          {
+            "delta": -1
+          }
+        ],
+        "allowInput": true
+      },
+      {
+        "key": "mod+shift+s",
+        "call": [
+          "project.save"
+        ],
+        "allowInput": true
+      }
+    ],
+    "theme": {
+      "url": "https://github.com/kkgams/theme.gams/releases/download/v1.0.1/theme.gams.zip#themes/the98.css"
+    },
+    "services": {
+      "ui-context": {
+        "url": "https://github.com/kkgams/ui-service.context/releases/download/v0.2.0/ui-service.context-0.2.0.zip#ui-plugins/context.js"
+      },
+      "ui-keys": {
+        "url": "https://github.com/kkgams/ui-service.keys/releases/download/v0.2.0/ui-service.keys-0.2.0.zip#ui-plugins/keys.js"
+      },
+      "ui-toast": {
+        "url": "https://github.com/kkgams/ui-service.toast/releases/download/v0.2.0/ui-service.toast-0.2.0.zip#ui-plugins/toast.js"
+      },
+      "ui-popup": {
+        "url": "https://github.com/kkgams/ui-service.popup/releases/download/v0.2.0/ui-service.popup-0.2.0.zip#ui-plugins/popup.js"
+      },
+      "ui-tooltip": {
+        "url": "https://github.com/kkgams/ui-service.tooltip/releases/download/v0.2.0/ui-service.tooltip-0.2.0.zip#ui-plugins/tooltip.js"
+      },
+      "ui-layout": {
+        "url": "src/ui-plugins/layout2.js",
+        "config": {
+          "layout": {
+            "state": null,
+            "views": {},
+            "defaultView": "view-files",
+            "engine": {
+              "gap": 6,
+              "min_width": 100,
+              "min_height": 80
+            }
+          }
+        }
+      }
+    },
+    "views": {
+      "view-files": {
+        "url": "https://github.com/kkgams/view.files/releases/download/v1.0.0/view.files-1.0.0.zip#views/view-files.js",
+        "label": "Files",
+        "group": "Project",
+        "internal": false,
+        "config": {}
+      }
+    }
+  }
+}

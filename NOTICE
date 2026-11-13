@@ -1,0 +1,15 @@
+GAMS BSP layout component and paired browser UI Service
+Copyright 2026 kkgams contributors. Licensed under Apache-2.0.
+
+The BSP design and algorithms were studied from TUIOS, by Gaurav Gosain,
+MIT licensed. This is an independent Rust implementation; the original copyright
+and permission notice are preserved in licenses/TUIOS-MIT.txt and appended to
+this distribution's notices.
+
+Reference: https://github.com/Gaurav-Gosain/tuios
+Revision: a086dffc310597c5bf675512384bfbdb4acc55de
+Studied: internal/layout/bsp.go, bsp_move.go, neighbour.go, arrange.go,
+        tiling.go and internal/app/os_window.go.
+
+Build-generated notices also contain original license files from the locked
+Rust dependencies. The WASM component embeds LICENSE and complete NOTICE texts.

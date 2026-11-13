@@ -1,0 +1,12 @@
+package gams:layout2@0.1.0;
+
+/// Caller-owned BSP/workspace documents. JSON schemas are documented in docs/.
+interface layout {
+    /// Empty state is accepted only with init. Errors leave caller state unchanged.
+    /// Success returns JSON { state, snapshot }; state is supplied on the next call.
+    execute: func(state: string, command: string) -> result<string, string>;
+}
+
+world layout-plugin {
+    export layout;
+}
