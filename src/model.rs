@@ -108,6 +108,10 @@ pub(crate) enum Command {
         split_id: u64,
         ratio: f64,
     },
+    ResizeDivider {
+        split_id: u64,
+        position: i32,
+    },
     Equalize {},
     Arrange {
         kind: Arrangement,
@@ -176,9 +180,12 @@ impl Command {
                     return Err(fail("Invalid ID or ratio"));
                 }
             }
-            Self::SetSplitRatio { split_id, ratio }
-                if *split_id == 0 || *split_id > MAX_SAFE_INTEGER || !valid_ratio(*ratio) =>
+            Self::SetSplitRatio { split_id, .. } | Self::ResizeDivider { split_id, .. }
+                if *split_id == 0 || *split_id > MAX_SAFE_INTEGER =>
             {
+                return Err(fail("Split ID must be a positive JavaScript-safe integer"))
+            }
+            Self::SetSplitRatio { ratio, .. } if !valid_ratio(*ratio) => {
                 return Err(fail(
                     "Ratio must be finite and strictly between zero and one",
                 ))

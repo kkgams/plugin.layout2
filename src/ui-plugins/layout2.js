@@ -69,6 +69,21 @@ export class EngineSession {
     }
 }
 
+export function dividerPosition(split, point, viewport, offset = 0) {
+    const position = split.vertical ? point.clientX - viewport.left - offset : point.clientY - viewport.top - offset
+    if (!Number.isFinite(position)) throw new Error("Divider position must be finite")
+    return Math.max(-2147483648, Math.min(2147483647, Math.round(position)))
+}
+export function handleBounds(split, thickness) {
+    if (!Number.isFinite(thickness) || thickness <= 0) throw new Error("Shared resize handle size must be positive")
+    if (split.vertical) {
+        const w = Math.max(split.w, thickness)
+        return { x: split.x + (split.w - w) / 2, y: split.y, w, h: split.h }
+    }
+    const h = Math.max(split.h, thickness)
+    return { x: split.x, y: split.y + (split.h - h) / 2, w: split.w, h }
+}
+
 // Browser implementation; the Host loads this file as a blob (no relative imports).
 export class ViewArea extends HTMLElement {
     constructor() {
@@ -103,10 +118,136 @@ export class ViewArea extends HTMLElement {
         select.value = this.getCurrentViewTag()
     }
 }
+export class ResizeHandle extends HTMLElement {
+    constructor() {
+        super()
+        this.gesture = null
+        this.addEventListener("pointerdown", (event) => {
+            if (this.gesture || !event.isPrimary || (event.pointerType === "mouse" && event.button !== 0)) return
+            event.preventDefault()
+            this.beginDrag(event)
+            this.setPointerCapture(event.pointerId)
+        })
+        this.addEventListener("pointermove", (event) => this.moveDrag(event))
+        this.addEventListener("pointerup", (event) => { void this.endDrag(event, false) })
+        this.addEventListener("pointercancel", (event) => { void this.endDrag(event, true) })
+        this.addEventListener("lostpointercapture", (event) => {
+            if (this.gesture && !this.gesture.ending) void this.endDrag(event, true)
+        })
+        this.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && this.gesture) {
+                event.preventDefault()
+                void this.endDrag({ pointerId: this.gesture.pointerId }, true)
+                return
+            }
+            if (event.metaKey || event.ctrlKey || event.altKey) return
+            const step = event.shiftKey ? 1 : 10
+            const deltas = this.split.vertical ? { ArrowLeft: -step, ArrowRight: step } : { ArrowUp: -step, ArrowDown: step }
+            const current = this.split.vertical ? this.split.x : this.split.y
+            const position = event.key === "Home" ? -2147483648 : event.key === "End" ? 2147483647 :
+                Object.hasOwn(deltas, event.key) ? current + deltas[event.key] : null
+            if (position === null) return
+            event.preventDefault()
+            this.abortDrag()
+            void this.owner.execute({ op: "resize-divider", split_id: this.split.id, position })
+        })
+    }
+    connectedCallback() {
+        this.style.position = "absolute"
+        this.style.touchAction = "none"
+        this.style.userSelect = "none"
+    }
+    disconnectedCallback() { this.abortDrag() }
+    beginDrag(event) {
+        this.owner.requireReady()
+        this.owner.cancelHandleDrags()
+        this.focus({ preventScroll: true })
+        const bounds = this.owner.viewport.getBoundingClientRect()
+        this.gesture = {
+            pointerId: event.pointerId,
+            split: this.split,
+            workspace: this.owner.session.snapshot.active_workspace,
+            offset: this.split.vertical ? event.clientX - bounds.left - this.split.x : event.clientY - bounds.top - this.split.y,
+            position: null,
+            frame: 0,
+            inFlight: null,
+            ending: false,
+            cancelled: false,
+        }
+    }
+    position(event, gesture) {
+        return dividerPosition(gesture.split, event, this.owner.viewport.getBoundingClientRect(), gesture.offset)
+    }
+    moveDrag(event) {
+        const gesture = this.gesture
+        if (!gesture || gesture.ending || event.pointerId !== gesture.pointerId) return
+        gesture.position = this.position(event, gesture)
+        this.queueFrame(gesture)
+    }
+    queueFrame(gesture) {
+        if (gesture.frame || gesture.inFlight) return
+        gesture.frame = requestAnimationFrame(() => {
+            gesture.frame = 0
+            void this.flushDrag(gesture)
+        })
+    }
+    async flushDrag(gesture) {
+        if (this.gesture !== gesture || gesture.cancelled || gesture.position === null) return
+        const position = gesture.position
+        gesture.position = null
+        const current = () => this.gesture === gesture && !gesture.cancelled && this.isConnected &&
+            this.owner.session.snapshot.active_workspace === gesture.workspace
+        const operation = this.owner.session.run(async () => {
+            if (!current()) return
+            await this.owner.command({ op: "resize-divider", split_id: gesture.split.id, position }, new Map(), current)
+        })
+        gesture.inFlight = operation
+        try {
+            await operation
+        } finally {
+            gesture.inFlight = null
+            if (this.gesture === gesture && !gesture.ending && gesture.position !== null) this.queueFrame(gesture)
+        }
+    }
+    async endDrag(event, cancelled) {
+        const gesture = this.gesture
+        if (!gesture || gesture.ending || event.pointerId !== gesture.pointerId) return
+        gesture.ending = true
+        gesture.cancelled = cancelled
+        if (gesture.frame) cancelAnimationFrame(gesture.frame)
+        gesture.frame = 0
+        if (this.hasPointerCapture(gesture.pointerId)) this.releasePointerCapture(gesture.pointerId)
+        try {
+            if (cancelled) {
+                gesture.position = null
+                await this.owner.session.run(async () => {
+                    if (this.gesture !== gesture) return
+                    this.gesture = null
+                    await this.owner.command({ op: "set-split-ratio", split_id: gesture.split.id, ratio: gesture.split.ratio })
+                })
+            } else {
+                gesture.position = this.position(event, gesture)
+                if (gesture.inFlight) await gesture.inFlight
+                await this.flushDrag(gesture)
+            }
+        } finally {
+            if (this.gesture === gesture) this.gesture = null
+        }
+    }
+    abortDrag() {
+        const gesture = this.gesture
+        if (!gesture) return
+        this.gesture = null
+        if (gesture.frame) cancelAnimationFrame(gesture.frame)
+        if (this.hasPointerCapture(gesture.pointerId)) this.releasePointerCapture(gesture.pointerId)
+    }
+}
+
 export class UiLayout extends HTMLElement {
     constructor() {
         super()
         this.ready = false; this.viewRegistry = new Map(); this.content = new Map(); this.workspaceNodes = new Map()
+        this.handles = new Map()
         this.session = new EngineSession(async (state, command) => unwrap(await runtime.invoke("layout2/layout::execute", state, command), "Layout execute"))
         this.api = {}
         for (const name of ["execute", "snapshot", "create", "close", "focusDirection", "moveDirection", "move", "resize", "arrange", "equalize", "workspaceCreate", "workspaceSwitch", "workspaceNext", "workspaceRename", "moveToWorkspace", "projectSave", "ping", "refresh"])
@@ -120,7 +261,8 @@ export class UiLayout extends HTMLElement {
         })
     }
     connectedCallback() { this.style.cssText = "position:fixed;inset:0;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)" }
-    disconnectedCallback() { this.resizeObserver.disconnect() }
+    disconnectedCallback() { this.cancelHandleDrags()
+        this.resizeObserver.disconnect() }
     setViewRegistry(registry) {
         if (!(registry instanceof Map)) throw new Error("View registry must be a Map")
         this.viewRegistry = registry
@@ -209,7 +351,8 @@ export class UiLayout extends HTMLElement {
             return { ok: true }
         })
     }
-    async command(command, additions = new Map()) {
+    async command(command, additions = new Map(), isCurrent = () => true) {
+        if (command.op !== "resize-divider" && command.op !== "snapshot") this.cancelHandleDrags()
         const result = await this.session.evaluate(command), prepared = []
         for (const workspace of result.snapshot.workspaces) {
             for (const id of workspace.panels) {
@@ -219,6 +362,7 @@ export class UiLayout extends HTMLElement {
             }
         }
         // Accept only after all required View factories have succeeded.
+        if (!isCurrent()) return { ok: structuredClone(this.session.snapshot) }
         this.session.accept(result)
         for (const { id, spec, node } of prepared) { this.settings.views[id] = spec; this.attachPanel(id, node) }
         await this.render()
@@ -305,6 +449,7 @@ export class UiLayout extends HTMLElement {
             for (const [field, source] of [["left", "x"], ["top", "y"], ["width", "w"], ["height", "h"]]) chrome.style[field] = `${panel[source]}px`
         }
         for (const [id, chrome] of this.content) chrome.classList.toggle("active", id === snapshot.focused)
+        this.renderHandles(snapshot)
         this.renderWorkspaces(snapshot)
         this.status.textContent = snapshot.constrained ? "Layout constrained: enlarge the window to show panels." : ""
         if (!snapshot.constrained && snapshot.focused !== null &&
@@ -313,6 +458,45 @@ export class UiLayout extends HTMLElement {
         }
         this.lastFocusedPanel = snapshot.focused; this.lastWorkspace = snapshot.active_workspace; this.wasConstrained = snapshot.constrained
         await this.activateFocusedView()
+    }
+    cancelHandleDrags() {
+        for (const handle of this.handles.values()) handle.abortDrag()
+    }
+    renderHandles(snapshot) {
+        const active = new Set(snapshot.splits.map(split => split.id))
+        for (const [id, node] of this.handles) {
+            if (active.has(id)) continue
+            node.remove()
+            this.handles.delete(id)
+        }
+        for (const split of snapshot.splits) {
+            let node = this.handles.get(split.id)
+            if (!node) {
+                node = document.createElement("view--handle")
+                node.owner = this
+                node.tabIndex = 0
+                node.setAttribute("role", "separator")
+                node.setAttribute("aria-label", "Resize panels")
+                node.setAttribute("aria-valuemin", "0")
+                node.setAttribute("aria-valuemax", "100")
+                this.handles.set(split.id, node)
+                this.viewport.append(node)
+            }
+            node.split = split
+            node.panel = String(split.id)
+            node.setAttribute("panel", node.panel)
+            node.setAttribute("aria-orientation", split.vertical ? "vertical" : "horizontal")
+            node.setAttribute("aria-valuenow", String(Math.round(split.ratio * 100)))
+            // Resolve the shared CSS size token, including rem/calc values,
+            // then center that hit area over the BSP gap in either direction.
+            node.style.width = "var(--resize-handle-size)"
+            const thickness = Number.parseFloat(getComputedStyle(node).width)
+            const rect = handleBounds(split, thickness)
+            for (const [property, source] of [["left", "x"], ["top", "y"], ["width", "w"], ["height", "h"]]) {
+                node.setAttribute(source, String(rect[source]))
+                node.style[property] = `${rect[source]}px`
+            }
+        }
     }
     renderWorkspaces(snapshot) {
         for (const workspace of snapshot.workspaces) {
@@ -371,4 +555,5 @@ export class UiLayout extends HTMLElement {
     }
 }
 customElements.define("view-area", ViewArea)
+customElements.define("view--handle", ResizeHandle)
 customElements.define("ui-layout", UiLayout)

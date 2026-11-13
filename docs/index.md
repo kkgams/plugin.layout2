@@ -65,6 +65,7 @@ The state is versioned and includes stable split IDs; do not edit tree internals
 | `swap` | `id`, `target`; exchange slots without reshaping the tree |
 | `resize` | `id`, `side`, `delta`; positive pixels grow toward that side |
 | `set-split-ratio` | `split_id`, `ratio`; absolute left/top fraction |
+| `resize-divider` | `split_id`, `position`; absolute x/y viewport pixel coordinate, clamped to valid panel minima |
 | `equalize` | Set all split ratios to one half, not necessarily equal final panel sizes |
 | `arrange` | `kind`: horizontal, vertical or grid; rebuild active tree |
 | `set-bounds` | `width`, `height`; viewport pixels |
@@ -77,6 +78,15 @@ The state is versioned and includes stable split IDs; do not edit tree internals
 For insertion/movement, `ratio` is the **new/moved panel's share**. For divider
 resizing it is the **left/top child's fraction**. Geometry uses integer pixels,
 not terminal cells or terminal aspect ratios.
+
+Drag the shared `view--handle` dividers to resize adjacent panels live. The same
+Host/theme CSS used by the original layout controls their thickness, cursor and
+stacking. Both divider directions support pointer capture; Escape or pointer
+cancellation restores the starting ratio. Closing/rearranging panels, changing
+workspaces or resizing the viewport ends an active drag and discards stale
+pending moves. Focused separators also accept arrows (10 pixels, or 1 with
+Shift) and Home/End for their minimum/maximum position. Divider clamping retains
+nested split ratios while respecting every affected panel's minimum size.
 
 ## Constraints and persistence
 

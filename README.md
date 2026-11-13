@@ -40,6 +40,10 @@ Use the toolbar and workspace tabs, or these Project-configured shortcuts.
 | `mod+alt+[` / `mod+alt+]` | Previous / next workspace |
 | `mod+shift+S` | Save Project, including layout and View selection |
 
+Drag the shared resize handles between panels for live resizing. Escape cancels
+a drag. Focused handles support arrows (10 pixels, Shift for 1) and Home/End;
+all resizing respects nested panel minimum sizes without recreating Views.
+
 ## Development
 
 | Command | Output / behavior |

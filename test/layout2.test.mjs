@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises'
 // Exercise the standalone module's pure protocol layer without a DOM/Host mock.
 const source = await readFile(new URL('../src/ui-plugins/layout2.js', import.meta.url), 'utf8')
 const pure = source.slice(source.indexOf('export class SerialQueue'), source.indexOf('// Browser implementation'))
-const { SerialQueue, EngineSession, validateLayout, parseCommand, parseEngineResponse, focusedCommand, savedAttributes } = await import(`data:text/javascript;base64,${Buffer.from(pure).toString('base64')}`)
+const { SerialQueue, EngineSession, validateLayout, parseCommand, parseEngineResponse, focusedCommand, savedAttributes, dividerPosition, handleBounds } = await import(`data:text/javascript;base64,${Buffer.from(pure).toString('base64')}`)
 const registry = new Map([['view-files', { create() {} }], ['view-internal', { internal: true, create() {} }]])
 const config = () => ({ state: null, views: {}, defaultView: 'view-files', engine: { gap: 6, min_width: 100, min_height: 80 } })
 const response = revision => JSON.stringify({ state: { revision }, snapshot: { revision, workspaces: [], panels: [], splits: [] } })
@@ -102,4 +102,21 @@ test('special JSON property names remain ordinary saved View input keys', () => 
     assert.equal(Object.hasOwn(saved.views, '__proto__'), true)
     assert.equal(saved.views.__proto__.tag, 'view-files')
     assert.deepEqual(savedAttributes(JSON.parse('{"__proto__":"authored"}'), [['__proto__', 'current']]), JSON.parse('{"__proto__":"current"}'))
+})
+
+test('divider pointer positions use viewport coordinates and preserve the grab offset', () => {
+    const viewport = { left: 25, top: 80 }
+    assert.equal(dividerPosition({ vertical: true }, { clientX: 230.5, clientY: 900 }, viewport, 5.5), 200)
+    assert.equal(dividerPosition({ vertical: false }, { clientX: 900, clientY: 284.5 }, viewport, 4.5), 200)
+    assert.equal(dividerPosition({ vertical: true }, { clientX: -1e20 }, viewport), -2147483648)
+    assert.equal(dividerPosition({ vertical: false }, { clientY: 1e20 }, viewport), 2147483647)
+    assert.throws(() => dividerPosition({ vertical: true }, { clientX: NaN }, viewport), /finite/)
+})
+
+test('shared handle hit areas are centered on split gaps, including zero-gap layouts', () => {
+    assert.deepEqual(handleBounds({ vertical: true, x: 100, y: 20, w: 6, h: 400 }, 12), { x: 97, y: 20, w: 12, h: 400 })
+    assert.deepEqual(handleBounds({ vertical: false, x: 30, y: 200, w: 500, h: 6 }, 12), { x: 30, y: 197, w: 500, h: 12 })
+    assert.deepEqual(handleBounds({ vertical: true, x: 100, y: 0, w: 0, h: 200 }, 12), { x: 94, y: 0, w: 12, h: 200 })
+    assert.deepEqual(handleBounds({ vertical: true, x: 100, y: 0, w: 20, h: 200 }, 12), { x: 100, y: 0, w: 20, h: 200 })
+    assert.throws(() => handleBounds({ vertical: true }, 0), /size/)
 })

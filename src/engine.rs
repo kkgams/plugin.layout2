@@ -301,6 +301,26 @@ fn swap(n: &mut Node, a: &str, b: &str) {
         }
     }
 }
+/// Find a split in the active tree together with its viewport rectangle.
+/// Called only after layout has validated every divide and leaf minimum.
+fn find_split(n: &Node, r: Rect, split: u64, gap: u32) -> Option<(&Node, Rect)> {
+    let Node::Split {
+        id,
+        vertical,
+        ratio,
+        first,
+        second,
+    } = n
+    else {
+        return None;
+    };
+    if *id == split {
+        return Some((n, r));
+    }
+    let (a, b, _) = geometry::divide(r, *vertical, *ratio, gap).expect("validated layout");
+    find_split(first, a, split, gap).or_else(|| find_split(second, b, split, gap))
+}
+
 fn set_ratio(n: Option<&mut Node>, split: u64, value: f64) -> bool {
     match n {
         Some(Node::Split {
@@ -418,6 +438,39 @@ pub(crate) fn apply(s: &mut State, c: &Command) -> Result<()> {
                 *delta,
                 gap,
             )?;
+            geometry::layout(s, i)?;
+        }
+        Command::ResizeDivider { split_id, position } => {
+            geometry::layout(s, i)?;
+            let (node, r) = s.workspaces[i]
+                .tree
+                .as_ref()
+                .and_then(|tree| find_split(tree, geometry::bounds(s), *split_id, s.gap))
+                .ok_or_else(|| {
+                    Error::new("unknown-split", "Split does not exist in active workspace")
+                })?;
+            let Node::Split {
+                vertical,
+                first,
+                second,
+                ..
+            } = node
+            else {
+                unreachable!("find_split returns a split");
+            };
+            let (origin, extent, minimum) = if *vertical {
+                (r.x, r.w, s.min_width)
+            } else {
+                (r.y, r.h, s.min_height)
+            };
+            let available = extent - s.gap;
+            let lower = geometry::minimum_span(first, available, *vertical, s.gap, minimum);
+            let upper =
+                available - geometry::minimum_span(second, available, *vertical, s.gap, minimum);
+            let requested = i64::from(*position) - i64::from(origin);
+            let span = requested.clamp(i64::from(lower), i64::from(upper));
+            let ratio = span as f64 / f64::from(available);
+            assert!(set_ratio(s.workspaces[i].tree.as_mut(), *split_id, ratio));
             geometry::layout(s, i)?;
         }
         Command::SetSplitRatio { split_id, ratio } => {
