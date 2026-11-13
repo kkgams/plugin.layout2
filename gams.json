@@ -235,7 +235,7 @@
             "views": {},
             "defaultView": "view-files",
             "engine": {
-              "gap": 6,
+              "gap": 0,
               "min_width": 100,
               "min_height": 80
             }
