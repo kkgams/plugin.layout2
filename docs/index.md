@@ -35,49 +35,80 @@ or application process. Closing the last panel leaves an empty workspace.
 
 ## Component API
 
-The component exports `gams:layout2/layout@0.1.0`:
+The component exports **`gams:layout2/layout@0.2.0`**. Every operation has its own
+function and typed WIT arguments, results and errors. Full signatures and field
+documentation are in `wit/layout.wit`; there is no `execute` export or JSON-string
+command protocol.
 
-```text
-execute(state: string, command: string) -> result<string, string>
+Mutations accept a caller-owned `layout-document` and return
+`result<layout-response, layout-error>`. The response contains `document` and
+`snapshot`; pass the returned document to the next function. `initialize` creates
+the initial document, while `get-snapshot` validates and reads without changing
+revision. IDs, enums, numeric arguments and optional targets are WIT values.
+
+```js
+const initialized = await runtime.invoke("layout2/layout::initialize", 1200, 800, {
+    gap: 0, "min-width": 100, "min-height": 80,
+})
+// Successful calls return { ok: { document, snapshot } }; failures return
+// { err: { code, message } }. Check the result before using its document.
+const first = await runtime.invoke("layout2/layout::create-panel",
+    initialized.ok.document, "files", null, "right", 0.5)
+const split = await runtime.invoke("layout2/layout::create-panel",
+    first.ok.document, "inspector", "files", "right", 0.5)
 ```
 
-Both arguments contain JSON. Empty state is accepted only for `init`. Success
-contains `{state, snapshot}`; pass the complete returned state to the next call.
-Errors contain JSON `{code,message}` and leave the caller's prior state unchanged.
-The state is versioned and includes stable split IDs; do not edit tree internals.
+Arguments below follow the required `document`, except for `initialize`.
 
-```json
-{"op":"init","width":1200,"height":800,"gap":6,"min_width":100,"min_height":80}
-{"op":"create","id":"a"}
-{"op":"create","id":"b","target":"a","side":"right","ratio":0.5}
-{"op":"workspace-create","id":"tools","name":"Tools"}
-{"op":"workspace-switch","id":"main"}
-{"op":"workspace-move","id":"b","workspace":"tools"}
-```
-
-| Command | Fields / meaning |
+| Function | Arguments / behavior |
 | --- | --- |
-| `create` / `split` | `id`, optional `target`, `side`, `ratio`; insert a new panel |
-| `close` / `focus` | `id` |
-| `focus-direction` | `side`: left, right, up or down |
-| `move` | `id`, `target`, `side`, optional `ratio` |
-| `move-root` | `id`, `side`, optional `ratio`; place at an outer edge |
-| `swap` | `id`, `target`; exchange slots without reshaping the tree |
-| `resize` | `id`, `side`, `delta`; positive pixels grow toward that side |
-| `set-split-ratio` | `split_id`, `ratio`; absolute left/top fraction |
-| `resize-divider` | `split_id`, `position`; absolute x/y viewport pixel coordinate, clamped to valid panel minima |
-| `equalize` | Set all split ratios to one half, not necessarily equal final panel sizes |
-| `arrange` | `kind`: horizontal, vertical or grid; rebuild active tree |
-| `set-bounds` | `width`, `height`; viewport pixels |
-| `workspace-create` | `id`, `name`; create empty and activate |
-| `workspace-switch` | `id` |
-| `workspace-rename` | `id`, `name` |
-| `workspace-move` | Panel `id`, destination `workspace`; keep active workspace |
-| `snapshot` | Validate and read without incrementing revision |
+| `initialize` | `width: u32`, `height: u32`, `config: layout-config`; empty Main workspace |
+| `get-snapshot` | Document only; return `layout-snapshot`, not a mutation response |
+| `create-panel` | `id: string`, `target: option<string>`, `side`, `share: f64` |
+| `close-panel` | `id: string`; collapse the parent and repair focus |
+| `focus-panel` | `id: string` |
+| `focus-direction` | `side`: left, right, up or down; no diagonal jump or wrapping |
+| `move-panel` | `id: string`, `target: string`, `side`, `share: f64` |
+| `move-panel-to-root` | `id: string`, `side`, `share: f64`; outer edge |
+| `swap-panels` | `first: string`, `second: string`; exchange slots |
+| `resize-panel` | `id: string`, `side`, `delta: s32`; positive pixels grow that edge |
+| `set-split-ratio` | `split-id: u64`, `ratio: f64`; strict absolute left/top fraction |
+| `resize-divider` | `split-id: u64`, `position: s32`; clamped absolute viewport x/y pixels |
+| `equalize` | Document only; set every split ratio to one half |
+| `arrange` | `kind`: horizontal, vertical or grid |
+| `set-bounds` | `width: u32`, `height: u32` |
+| `create-workspace` | `id: string`, `name: string`; create empty and activate |
+| `switch-workspace` | `id: string` |
+| `rename-workspace` | `id: string`, `name: string` |
+| `move-panel-to-workspace` | `id: string`, `workspace: string`; keep active workspace |
 
-For insertion/movement, `ratio` is the **new/moved panel's share**. For divider
-resizing it is the **left/top child's fraction**. Geometry uses integer pixels,
-not terminal cells or terminal aspect ratios.
+`share` is the new/moved panel's fraction, strictly between zero and one. Divider
+`ratio` is the left/top child's fraction. Equalizing split ratios does not
+necessarily produce equal final panel sizes; use an arrangement for that.
+Geometry uses integer pixels, not terminal cells or terminal aspect ratios.
+
+### Documents and errors
+
+Version-2 documents hold workspace-local flat `nodes` lists. Each node is a
+`layout-node` variant: `panel(string)` or `split(split-node)`. Workspace `root`
+and split `first`/`second` are node-list indices; split `id` is a separate stable
+identity. This expresses BSP trees without recursive WIT types. JS callers use
+Host variant values such as `{ case: "panel", value: "files" }` and
+`{ case: "split", value: { id, vertical, ratio, first, second } }`. WIT record
+field names remain hyphenated in JS, for example `document["active-workspace"]`.
+
+Typed `layout-error` contains an `error-code` enum and message. Codes distinguish
+invalid arguments/documents, unknown or duplicate identities, insufficient space,
+limits and internal failures. Malformed WIT argument types are rejected by the
+Host before layout execution. Imported documents reject cycles, shared children,
+invalid indices, orphan nodes, duplicate IDs, bad focus and excessive depth/count.
+
+Version 0.2 is a **breaking component interface change**: update this component
+and its paired UI Service together. Existing `plugin.layout` / `ui-service.layout`
+are unaffected. The paired service explicitly converts version-1 saved Project
+layout trees to version-2 flat documents on load, preserving split IDs, panel
+membership, ratios and workspace focus. Project Save persists the new document;
+no legacy string API is retained. Unknown saved versions fail explicitly.
 
 Drag the shared `view--handle` dividers to resize adjacent panels live. The same
 Host/theme CSS used by the original layout controls their thickness, cursor and
@@ -90,7 +121,7 @@ nested split ratios while respecting every affected panel's minimum size.
 
 ## Constraints and persistence
 
-Commands validate IDs, tree structure, ratios and minimum geometry before
+Operations validate IDs, tree structure, ratios and minimum geometry before
 returning a new document. Successful mutations increment revision once.
 Snapshots contain only active-workspace rectangles and split guides, plus all
 workspace memberships and focus. An undersized viewport is represented as

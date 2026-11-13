@@ -221,13 +221,13 @@ impl Command {
 pub(crate) fn valid_ratio(r: f64) -> bool {
     r.is_finite() && r > 0.0 && r < 1.0
 }
-fn valid_id(s: &str) -> bool {
+pub(crate) fn valid_id(s: &str) -> bool {
     !s.trim().is_empty() && s.len() <= 256 && !s.chars().any(char::is_control)
 }
-fn valid_name(s: &str) -> bool {
+pub(crate) fn valid_name(s: &str) -> bool {
     !s.trim().is_empty() && s.len() <= 1024 && !s.chars().any(char::is_control)
 }
-fn config_valid(w: u32, h: u32, g: u32, mw: u32, mh: u32) -> bool {
+pub(crate) fn config_valid(w: u32, h: u32, g: u32, mw: u32, mh: u32) -> bool {
     w <= MAX_DIM
         && h <= MAX_DIM
         && g <= MAX_DIM

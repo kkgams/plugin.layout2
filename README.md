@@ -4,6 +4,10 @@ A Rust BSP layout component paired with its browser UI Service. Workspaces have
 independent trees and focus; moving or resizing panels preserves their Views.
 Floating windows are not implemented in this first slice.
 
+The component exposes individual typed functions through `gams:layout2/layout@0.2.0`,
+not a JSON-string dispatcher. The paired service and component must be updated
+together; existing saved version-1 layouts convert on load.
+
 ## Try it
 
 Install Nix and enable direnv, or run commands through `nix develop --command`.
@@ -65,5 +69,5 @@ Install both entries together: the service is not compatible with the old
 `plugin.layout` interface. This repository does not replace either existing Unit.
 No remote, tag, release or publication is configured by local development.
 
-See [the command/state contract](docs/index.md). Apache-2.0 for authored code;
+See [the typed API and document contract](docs/index.md). Apache-2.0 for authored code;
 TUIOS MIT attribution and original terms are retained in `licenses/TUIOS-MIT.txt`.

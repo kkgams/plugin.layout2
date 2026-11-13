@@ -1,163 +1,203 @@
-use gams_layout2::execute;
-use serde_json::{json, Value};
-fn init() -> Value {
-    serde_json::from_str(
-        &execute(
-            "",
-            r#"{"op":"init","width":1000,"height":800,"gap":6,"min_width":10,"min_height":10}"#,
-        )
-        .unwrap(),
+use gams_layout2::*;
+use std::collections::HashSet;
+
+fn init() -> LayoutResponse {
+    initialize(
+        1000,
+        800,
+        LayoutConfig {
+            gap: 6,
+            min_width: 10,
+            min_height: 10,
+        },
     )
     .unwrap()
 }
-fn apply(state: &Value, c: Value) -> Result<Value, String> {
-    execute(&state.to_string(), &c.to_string()).map(|v| serde_json::from_str(&v).unwrap())
-}
-fn balanced(start: usize, n: usize, counter: &mut u64) -> Value {
+fn balanced(nodes: &mut Vec<LayoutNode>, start: usize, n: usize, counter: &mut u64) -> u32 {
     if n == 1 {
-        return json!({"kind":"leaf","id":format!("p{start}")});
+        let index = nodes.len() as u32;
+        nodes.push(LayoutNode::Panel(format!("p{start}")));
+        return index;
     }
     let id = *counter;
     *counter += 1;
     let a = n / 2;
-    json!({"kind":"split","id":id,"vertical":true,"ratio":0.5,"first":balanced(start,a,counter),"second":balanced(start+a,n-a,counter)})
+    let first = balanced(nodes, start, a, counter);
+    let second = balanced(nodes, start + a, n - a, counter);
+    let index = nodes.len() as u32;
+    nodes.push(LayoutNode::Split(SplitNode {
+        id,
+        vertical: true,
+        ratio: 0.5,
+        first,
+        second,
+    }));
+    index
 }
-fn error_code(result: Result<Value, String>) -> Value {
-    serde_json::from_str::<Value>(&result.unwrap_err()).unwrap()["code"].clone()
+fn import_tree(nodes: Vec<LayoutNode>, root: u32, next: u64) -> LayoutDocument {
+    let mut d = init().document;
+    d.workspaces[0].nodes = nodes;
+    d.workspaces[0].root = Some(root);
+    d.workspaces[0].focused = Some("p0".into());
+    d.next_split_id = next;
+    d
 }
+
 #[test]
 fn depth_and_count_are_bounded_but_maximum_documents_import() {
-    let mut d = init();
-    let mut tree = json!({"kind":"leaf","id":"p0"});
+    let mut nodes = vec![LayoutNode::Panel("p0".into())];
+    let mut root = 0;
     for i in 1..64 {
-        tree = json!({"kind":"split","id":i,"vertical":true,"ratio":0.5,"first":tree,"second":{"kind":"leaf","id":format!("p{i}")}});
+        let second = nodes.len() as u32;
+        nodes.push(LayoutNode::Panel(format!("p{i}")));
+        nodes.push(LayoutNode::Split(SplitNode {
+            id: i,
+            vertical: true,
+            ratio: 0.5,
+            first: root,
+            second,
+        }));
+        root = nodes.len() as u32 - 1;
     }
-    d["state"]["workspaces"][0]["tree"] = tree.clone();
-    d["state"]["workspaces"][0]["focused"] = json!("p0");
-    d["state"]["next_split_id"] = json!(100);
-    let imported = apply(&d["state"], json!({"op":"snapshot"})).unwrap();
-    assert_eq!(imported["snapshot"]["constrained"], true);
+    let snapshot = get_snapshot(import_tree(nodes.clone(), root, 100)).unwrap();
+    assert!(snapshot.constrained);
+    assert_eq!(snapshot.workspaces[0].panels.len(), 64);
+    let second = nodes.len() as u32;
+    nodes.push(LayoutNode::Panel("last".into()));
+    nodes.push(LayoutNode::Split(SplitNode {
+        id: 64,
+        vertical: false,
+        ratio: 0.5,
+        first: root,
+        second,
+    }));
+    root = nodes.len() as u32 - 1;
     assert_eq!(
-        imported["snapshot"]["workspaces"][0]["panels"]
-            .as_array()
-            .unwrap()
-            .len(),
-        64
+        get_snapshot(import_tree(nodes, root, 100))
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidDocument
     );
-    d["state"]["workspaces"][0]["tree"] = json!({"kind":"split","id":64,"vertical":false,"ratio":0.5,"first":tree,"second":{"kind":"leaf","id":"last"}});
-    assert_eq!(
-        error_code(apply(&d["state"], json!({"op":"snapshot"}))),
-        "invalid-state"
-    );
-    let mut s = init()["state"].clone();
-    let mut counter = 1;
-    s["workspaces"][0]["tree"] = balanced(0, 1024, &mut counter);
-    s["workspaces"][0]["focused"] = json!("p0");
-    s["next_split_id"] = json!(counter);
-    assert!(apply(&s, json!({"op":"snapshot"})).is_ok());
-    let mut counter = 1;
-    s["workspaces"][0]["tree"] = balanced(0, 1025, &mut counter);
-    s["next_split_id"] = json!(counter);
-    assert_eq!(
-        error_code(apply(&s, json!({"op":"snapshot"}))),
-        "invalid-state"
-    );
+    for count in [1024, 1025] {
+        let mut nodes = Vec::new();
+        let mut counter = 1;
+        let root = balanced(&mut nodes, 0, count, &mut counter);
+        let result = get_snapshot(import_tree(nodes, root, counter));
+        if count == 1024 {
+            assert!(result.is_ok());
+        } else {
+            assert_eq!(result.unwrap_err().code, ErrorCode::InvalidDocument);
+        }
+    }
 }
+
 #[test]
 fn workspace_move_failure_is_atomic_and_inactive_constraints_are_retained() {
     let mut d = init();
     for id in ["a", "b"] {
-        d = apply(&d["state"], json!({"op":"create","id":id})).unwrap();
+        d = create_panel(d.document, id.into(), None, Side::Right, 0.5).unwrap();
     }
-    d = apply(
-        &d["state"],
-        json!({"op":"workspace-create","id":"other","name":"Other"}),
-    )
-    .unwrap();
-    d = apply(&d["state"], json!({"op":"create","id":"c"})).unwrap();
-    d = apply(
-        &d["state"],
-        json!({"op":"set-bounds","width":10,"height":10}),
-    )
-    .unwrap();
-    let before = d.clone();
+    d = create_workspace(d.document, "other".into(), "Other".into()).unwrap();
+    d = create_panel(d.document, "c".into(), None, Side::Right, 0.5).unwrap();
+    d = set_bounds(d.document, 10, 10).unwrap();
+    let before = d.document.clone();
     assert_eq!(
-        error_code(apply(
-            &d["state"],
-            json!({"op":"workspace-move","id":"c","workspace":"main"})
-        )),
-        "insufficient-space"
+        move_panel_to_workspace(d.document.clone(), "c".into(), "main".into())
+            .unwrap_err()
+            .code,
+        ErrorCode::InsufficientSpace
     );
-    assert_eq!(
-        apply(&d["state"], json!({"op":"snapshot"})).unwrap(),
-        before
-    );
-    d = apply(&d["state"], json!({"op":"set-bounds","width":0,"height":0})).unwrap();
-    assert_eq!(d["snapshot"]["constrained"], true);
-    d = apply(&d["state"], json!({"op":"workspace-switch","id":"main"})).unwrap();
-    assert_eq!(d["snapshot"]["workspaces"][0]["panels"], json!(["a", "b"]));
-    assert_eq!(d["snapshot"]["panels"], json!([]));
+    assert_eq!(d.document, before);
+    assert_eq!(get_snapshot(d.document.clone()).unwrap(), d.snapshot);
+    d = set_bounds(d.document, 0, 0).unwrap();
+    assert!(d.snapshot.constrained);
+    d = switch_workspace(d.document, "main".into()).unwrap();
+    assert_eq!(d.snapshot.workspaces[0].panels, ["a", "b"]);
+    assert!(d.snapshot.panels.is_empty());
 }
-#[test]
-fn deterministic_replay_preserves_membership_and_nonoverlap() {
+
+fn replay() -> LayoutResponse {
     let mut d = init();
     let mut seed = 123456789_u64;
+    let mut membership = HashSet::new();
     for turn in 0..300 {
         seed ^= seed << 13;
         seed ^= seed >> 7;
         seed ^= seed << 17;
-        let ids: Vec<String> = d["snapshot"]["workspaces"][0]["panels"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap().into())
-            .collect();
+        let ids = &d.snapshot.workspaces[0].panels;
         let id = ids
             .get(seed as usize % ids.len().max(1))
             .cloned()
             .unwrap_or_default();
-        let side = ["left", "right", "up", "down"][(seed >> 8) as usize % 4];
-        let c = match seed % 9 {
-            0 | 1 => json!({"op":"create","id":format!("p{turn}"),"side":side}),
-            2 if !ids.is_empty() => json!({"op":"close","id":id}),
-            3 if !ids.is_empty() => json!({"op":"move-root","id":id,"side":side,"ratio":0.3}),
-            4 if !ids.is_empty() => json!({"op":"resize","id":id,"side":side,"delta":13}),
-            5 => {
-                json!({"op":"arrange","kind":(["horizontal","vertical","grid"][(seed>>16)as usize%3])})
-            }
-            6 => json!({"op":"set-bounds","width":50+(seed>>16)%1000,"height":50+(seed>>32)%800}),
-            7 => json!({"op":"equalize"}),
-            _ => json!({"op":"focus-direction","side":side}),
+        let side = [Side::Left, Side::Right, Side::Up, Side::Down][(seed >> 8) as usize % 4];
+        let before = d.document.clone();
+        let action = seed % 9;
+        let result = match action {
+            0 | 1 => create_panel(d.document.clone(), format!("p{turn}"), None, side, 0.5),
+            2 if !ids.is_empty() => close_panel(d.document.clone(), id.clone()),
+            3 if !ids.is_empty() => move_panel_to_root(d.document.clone(), id.clone(), side, 0.3),
+            4 if !ids.is_empty() => resize_panel(d.document.clone(), id.clone(), side, 13),
+            5 => arrange(
+                d.document.clone(),
+                [
+                    Arrangement::Horizontal,
+                    Arrangement::Vertical,
+                    Arrangement::Grid,
+                ][(seed >> 16) as usize % 3],
+            ),
+            6 => set_bounds(
+                d.document.clone(),
+                50 + ((seed >> 16) % 1000) as u32,
+                50 + ((seed >> 32) % 800) as u32,
+            ),
+            7 => equalize(d.document.clone()),
+            _ => focus_direction(d.document.clone(), side),
         };
-        match apply(&d["state"], c) {
-            Ok(next) => d = next,
+        match result {
+            Ok(next) => {
+                if action <= 1 {
+                    assert!(membership.insert(format!("p{turn}")));
+                }
+                if action == 2 && !ids.is_empty() {
+                    assert!(membership.remove(&id));
+                }
+                assert_eq!(next.document.revision, before.revision + 1);
+                d = next;
+            }
             Err(e) => {
-                let e: Value = serde_json::from_str(&e).unwrap();
-                assert_eq!(e["code"], "insufficient-space");
+                assert_eq!(e.code, ErrorCode::InsufficientSpace, "{}", e.message);
+                assert_eq!(d.document, before);
             }
         }
-        assert_eq!(apply(&d["state"], json!({"op":"snapshot"})).unwrap(), d);
-        let panels = d["snapshot"]["panels"].as_array().unwrap();
-        for (a, p) in panels.iter().enumerate() {
-            let x = p["x"].as_u64().unwrap();
-            let y = p["y"].as_u64().unwrap();
-            let w = p["w"].as_u64().unwrap();
-            let h = p["h"].as_u64().unwrap();
-            assert!(w >= 10 && h >= 10);
-            assert!(
-                x + w <= d["snapshot"]["width"].as_u64().unwrap()
-                    && y + h <= d["snapshot"]["height"].as_u64().unwrap()
-            );
-            for q in &panels[a + 1..] {
-                let qx = q["x"].as_u64().unwrap();
-                let qy = q["y"].as_u64().unwrap();
+        assert_eq!(get_snapshot(d.document.clone()).unwrap(), d.snapshot);
+        assert_eq!(
+            d.snapshot.workspaces[0]
+                .panels
+                .iter()
+                .cloned()
+                .collect::<HashSet<_>>(),
+            membership
+        );
+        assert_eq!(d.snapshot.workspaces[0].panels.len(), membership.len());
+        if let Some(focused) = &d.snapshot.focused {
+            assert!(membership.contains(focused));
+        }
+        for (a, p) in d.snapshot.panels.iter().enumerate() {
+            assert!(p.w >= 10 && p.h >= 10);
+            assert!(p.x + p.w <= d.snapshot.width && p.y + p.h <= d.snapshot.height);
+            for q in &d.snapshot.panels[a + 1..] {
                 assert!(
-                    x + w <= qx
-                        || qx + q["w"].as_u64().unwrap() <= x
-                        || y + h <= qy
-                        || qy + q["h"].as_u64().unwrap() <= y
+                    p.x + p.w <= q.x || q.x + q.w <= p.x || p.y + p.h <= q.y || q.y + q.h <= p.y
                 );
             }
         }
     }
+    d
+}
+#[test]
+fn deterministic_replay_preserves_membership_and_nonoverlap() {
+    let first = replay();
+    let second = replay();
+    assert_eq!(first.document, second.document);
+    assert_eq!(first.snapshot, second.snapshot);
 }

@@ -5,10 +5,10 @@ import { readFile } from 'node:fs/promises'
 // Exercise the standalone module's pure protocol layer without a DOM/Host mock.
 const source = await readFile(new URL('../src/ui-plugins/layout2.js', import.meta.url), 'utf8')
 const pure = source.slice(source.indexOf('export class SerialQueue'), source.indexOf('// Browser implementation'))
-const { SerialQueue, EngineSession, validateLayout, parseCommand, parseEngineResponse, focusedCommand, savedAttributes, dividerPosition, handleBounds } = await import(`data:text/javascript;base64,${Buffer.from(pure).toString('base64')}`)
+const { SerialQueue, EngineSession, validateLayout, validateEngineResponse, unwrapLayoutResult, migrateSavedDocument, savedAttributes, dividerPosition, handleBounds } = await import(`data:text/javascript;base64,${Buffer.from(pure).toString('base64')}`)
 const registry = new Map([['view-files', { create() {} }], ['view-internal', { internal: true, create() {} }]])
-const config = () => ({ state: null, views: {}, defaultView: 'view-files', engine: { gap: 6, min_width: 100, min_height: 80 } })
-const response = revision => JSON.stringify({ state: { revision }, snapshot: { revision, workspaces: [], panels: [], splits: [] } })
+const config = () => ({ state: null, views: {}, defaultView: 'view-files', engine: { gap: 0, min_width: 100, min_height: 80 } })
+const response = revision => ({ document: { version: 2, revision, workspaces: [] }, snapshot: { revision, 'active-workspace': 'main', workspaces: [], panels: [], splits: [] } })
 
 test('queue serializes pending commands, resize and save; failed caller rejects without poisoning queue', async () => {
     const queue = new SerialQueue(), order = []
@@ -25,28 +25,51 @@ test('queue serializes pending commands, resize and save; failed caller rejects 
     assert.deepEqual(order, ['command', 'commit', 'resize', 'save'])
 })
 
-test('engine session serializes exact latest state and supports noncommitting focus probes', async () => {
+test('engine session invokes individual typed exports with the current document and positional arguments', async () => {
     const inputs = []
-    const session = new EngineSession(async (state, command) => {
-        inputs.push([state, JSON.parse(command)])
-        return response((state ? JSON.parse(state).revision : 0) + 1)
+    const session = new EngineSession(async (method, ...args) => {
+        inputs.push([method, ...args])
+        return response(method === 'initialize' ? 1 : args[0].revision + 1)
     })
-    await session.run(() => session.request({ op: 'init' }))
-    await session.run(() => session.request({ op: 'focus-direction', side: 'right' }, false))
-    assert.equal(session.state.revision, 1)
-    await session.run(() => session.request({ op: 'move', id: 'a', target: 'b', side: 'right' }))
-    assert.equal(session.state.revision, 2)
-    assert.deepEqual(inputs.map(([state]) => state), ['', '{"revision":1}', '{"revision":1}'])
+    const settings = { gap: 0, 'min-width': 100, 'min-height': 80 }
+    await session.run(() => session.initialize(800, 600, settings))
+    const first = session.document
+    await session.run(() => session.request('focus-direction', ['right'], false))
+    assert.equal(session.document.revision, 1)
+    await session.run(() => session.request('move-panel', ['a', 'b', 'right', 0.5]))
+    assert.equal(session.document.revision, 2)
+    assert.deepEqual(inputs[0], ['initialize', 800, 600, settings])
+    assert.deepEqual(inputs[1], ['focus-direction', first, 'right'])
+    assert.deepEqual(inputs[2], ['move-panel', first, 'a', 'b', 'right', 0.5])
+    assert.equal(typeof inputs[2][1], 'object')
 })
 
-test('invalid engine responses never overwrite accepted state', async () => {
+test('invalid typed responses never overwrite accepted documents', async () => {
     let invalid = false
-    const session = new EngineSession(async () => invalid ? '{}' : response(1))
-    await session.request({ op: 'snapshot' })
+    const session = new EngineSession(async () => invalid ? {} : response(1))
+    await session.initialize(800, 600, {})
     invalid = true
-    await assert.rejects(session.request({ op: 'snapshot' }), /Engine state/)
-    assert.equal(session.state.revision, 1)
-    assert.throws(() => parseEngineResponse({}), /JSON string/)
+    await assert.rejects(session.request('focus-panel', ['a']), /Layout document/)
+    assert.equal(session.document.revision, 1)
+    assert.throws(() => validateEngineResponse('{}'), /object/)
+})
+
+test('typed layout errors preserve their code and message without JSON parsing', () => {
+    assert.deepEqual(unwrapLayoutResult({ ok: { document: {} } }), { document: {} })
+    assert.throws(() => unwrapLayoutResult({ err: { code: 'unknown-panel', message: 'Missing a' } }), error => error.code === 'unknown-panel' && error.message === '[unknown-panel] Missing a')
+    assert.throws(() => unwrapLayoutResult({ err: 'old opaque error' }), /object/)
+    assert.throws(() => unwrapLayoutResult({}), /ok or err/)
+})
+
+test('snapshot reads call get-snapshot without changing the caller-owned document', async () => {
+    const calls = [], snapshot = response(4).snapshot
+    const session = new EngineSession(async (method, document) => { calls.push([method, document]); return snapshot })
+    await assert.rejects(session.readSnapshot(), /not initialized/)
+    session.document = response(4).document
+    const document = session.document
+    assert.equal(await session.readSnapshot(), snapshot)
+    assert.equal(session.document, document)
+    assert.deepEqual(calls, [['get-snapshot', document]])
 })
 
 test('layout validation rejects invalid registry entries/settings and preserves independent attributes', () => {
@@ -61,21 +84,6 @@ test('layout validation rejects invalid registry entries/settings and preserves 
     }
 })
 
-test('commands accept object or JSON using the Rust op discriminator, never legacy type', () => {
-    assert.deepEqual(parseCommand('{"op":"snapshot"}'), { op: 'snapshot' })
-    const command = { op: 'create', id: 'a' }
-    assert.notEqual(parseCommand(command), command)
-    assert.throws(() => parseCommand({ type: 'snapshot' }), /Command.op/)
-    assert.throws(() => parseCommand('[]'), /object/)
-})
-
-test('focused panel commands use the engine op discriminator and cannot override identity', () => {
-    assert.deepEqual(focusedCommand('close', 'a'), { op: 'close', id: 'a' })
-    assert.deepEqual(focusedCommand('resize', 'a', { side: 'left', delta: 24, op: 'bad', id: 'b' }), { op: 'resize', id: 'a', side: 'left', delta: 24 })
-    assert.deepEqual(focusedCommand('workspace-move', 'a', { workspace: 'tools' }), { op: 'workspace-move', id: 'a', workspace: 'tools' })
-    assert.throws(() => focusedCommand('close', ''), /No focused panel/)
-})
-
 test('saving retains configured/source attributes without transient View markers', () => {
     const configured = { title: 'Files', 'data-source': 'old.lua' }
     assert.deepEqual(savedAttributes(configured, [['title', 'Files'], ['data-source', 'new.lua'], ['data-root', '.'], ['data-ready', '1'], ['style', 'display:contents']]), { title: 'Files', 'data-source': 'new.lua', 'data-root': '.' })
@@ -83,16 +91,16 @@ test('saving retains configured/source attributes without transient View markers
     assert.deepEqual(savedAttributes(configured, [['title', 'Files']]), { title: 'Files' })
 })
 
-test('evaluated layouts stay uncommitted until required Views are ready', async () => {
+test('typed evaluated layouts stay uncommitted until required Views are ready', async () => {
     let revision = 1
     const session = new EngineSession(async () => response(revision))
-    await session.request({ op: 'snapshot' })
+    await session.initialize(800, 600, {})
     revision = 2
-    const pending = await session.evaluate({ op: 'create', id: 'b' })
-    assert.equal(pending.state.revision, 2)
-    assert.equal(session.state.revision, 1)
+    const pending = await session.evaluate('create-panel', 'b', null, 'right', 0.5)
+    assert.equal(pending.document.revision, 2)
+    assert.equal(session.document.revision, 1)
     session.accept(pending)
-    assert.equal(session.state.revision, 2)
+    assert.equal(session.document.revision, 2)
 })
 
 test('special JSON property names remain ordinary saved View input keys', () => {
@@ -119,4 +127,42 @@ test('shared handle hit areas are centered on split gaps, including zero-gap lay
     assert.deepEqual(handleBounds({ vertical: true, x: 100, y: 0, w: 0, h: 200 }, 12), { x: 94, y: 0, w: 12, h: 200 })
     assert.deepEqual(handleBounds({ vertical: true, x: 100, y: 0, w: 20, h: 200 }, 12), { x: 100, y: 0, w: 20, h: 200 })
     assert.throws(() => handleBounds({ vertical: true }, 0), /size/)
+})
+
+function savedV1() {
+    return { version: 1, revision: 7, width: 800, height: 600, gap: 0, min_width: 100, min_height: 80,
+        next_split_id: 8, active_workspace: 'main', workspaces: [{ id: 'main', name: 'Main', focused: 'b',
+            tree: { kind: 'split', id: 7, vertical: true, ratio: 0.6, first: { kind: 'leaf', id: 'a' }, second: { kind: 'leaf', id: 'b' } } }] }
+}
+
+test('saved version-1 layouts migrate to typed flat documents without losing identity or ratios', () => {
+    const old = savedV1(), before = structuredClone(old), document = migrateSavedDocument(old)
+    assert.equal(document.version, 2)
+    assert.equal(document['next-split-id'], 8)
+    assert.equal(document['active-workspace'], 'main')
+    assert.equal(document['min-width'], 100)
+    assert.equal(document.workspaces[0].focused, 'b')
+    assert.equal(document.workspaces[0].root, 0)
+    assert.deepEqual(document.workspaces[0].nodes, [
+        { case: 'split', value: { id: 7, vertical: true, ratio: 0.6, first: 1, second: 2 } },
+        { case: 'panel', value: 'a' }, { case: 'panel', value: 'b' },
+    ])
+    assert.deepEqual(old, before)
+    const typed = migrateSavedDocument(document)
+    assert.deepEqual(typed, document)
+    assert.notEqual(typed, document)
+    assert.equal(migrateSavedDocument(null), null)
+})
+
+test('saved layout migration rejects unknown versions, malformed trees, cycles and excessive depth', () => {
+    assert.throws(() => migrateSavedDocument({ version: 9 }), /Unsupported/)
+    const cyclic = savedV1(); cyclic.workspaces[0].tree.first = cyclic.workspaces[0].tree
+    assert.throws(() => migrateSavedDocument(cyclic), /Invalid saved BSP tree/)
+    const badKind = savedV1(); badKind.workspaces[0].tree.kind = 'broken'
+    assert.throws(() => migrateSavedDocument(badKind), /node kind/)
+    const missing = savedV1(); delete missing.workspaces[0].focused
+    assert.throws(() => migrateSavedDocument(missing), /tree\/focus/)
+    const deep = savedV1()
+    for (let i = 0; i < 65; i++) deep.workspaces[0].tree = { kind: 'split', id: 20 + i, vertical: true, ratio: 0.5, first: deep.workspaces[0].tree, second: { kind: 'leaf', id: `p${i}` } }
+    assert.throws(() => migrateSavedDocument(deep), /Invalid saved BSP tree/)
 })

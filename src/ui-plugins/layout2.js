@@ -34,36 +34,98 @@ export function validateLayout(value, registry) {
     }
     return structuredClone(value)
 }
-export function parseCommand(input) {
-    const command = object(typeof input === "string" ? JSON.parse(input) : input, "Command")
-    if (typeof command.op !== "string" || !command.op) throw new Error("Command.op is required")
-    return structuredClone(command)
-}
-export function focusedCommand(op, id, fields = {}) {
-    if (typeof id !== "string" || !id) throw new Error("No focused panel")
-    return parseCommand({ ...fields, op, id })
-}
 export function savedAttributes(configured, attributes) {
     return Object.fromEntries(attributes.filter(([name]) =>
         Object.hasOwn(configured || {}, name) || (name.startsWith("data-") && name !== "data-ready")))
 }
-export function parseEngineResponse(json) {
-    if (typeof json !== "string") throw new Error("Engine must return a JSON string")
-    const result = object(JSON.parse(json), "Engine response")
-    object(result.state, "Engine state"); object(result.snapshot, "Engine snapshot")
-    for (const key of ["workspaces", "panels", "splits"]) if (!Array.isArray(result.snapshot[key])) throw new Error(`Invalid snapshot.${key}`)
-    if (!Number.isFinite(result.snapshot.revision)) throw new Error("Snapshot revision is required")
-    return result
+export function unwrapLayoutResult(result) {
+    object(result, "Layout result")
+    if (Object.hasOwn(result, "err")) {
+        const failure = object(result.err, "Layout error")
+        if (typeof failure.code !== "string" || typeof failure.message !== "string") throw new Error("Invalid typed layout error")
+        const error = new Error(`[${failure.code}] ${failure.message}`)
+        error.code = failure.code
+        throw error
+    }
+    if (!Object.hasOwn(result, "ok")) throw new Error("Layout result must contain ok or err")
+    return result.ok
+}
+export function validateSnapshot(value) {
+    object(value, "Layout snapshot")
+    for (const key of ["workspaces", "panels", "splits"])
+        if (!Array.isArray(value[key])) throw new Error(`Invalid snapshot.${key}`)
+    if (!Number.isSafeInteger(value.revision) || typeof value["active-workspace"] !== "string") throw new Error("Invalid snapshot revision/workspace")
+    return value
+}
+export function validateEngineResponse(value) {
+    object(value, "Layout response")
+    object(value.document, "Layout document")
+    if (value.document.version !== 2 || !Array.isArray(value.document.workspaces)) throw new Error("Invalid typed layout document")
+    validateSnapshot(value.snapshot)
+    return value
+}
+// Only saved Project configuration needs this one-time conversion. The component
+// boundary itself accepts typed version-2 documents, never legacy JSON strings.
+export function migrateSavedDocument(value) {
+    if (value === null) return null
+    object(value, "Saved layout document")
+    if (value.version === 2) return structuredClone(value)
+    if (value.version !== 1) throw new Error(`Unsupported saved layout version '${value.version}'`)
+    if (!Array.isArray(value.workspaces) || value.workspaces.length > 128) throw new Error("Invalid saved workspaces")
+    let totalNodes = 0
+    const workspaces = value.workspaces.map(workspace => {
+        object(workspace, "Saved workspace")
+        const nodes = [], visited = new Set()
+        const flatten = (node, depth) => {
+            object(node, "Saved BSP node")
+            if (depth > 64 || visited.has(node) || ++totalNodes > 2047) throw new Error("Invalid saved BSP tree")
+            visited.add(node)
+            const index = nodes.length
+            nodes.push(null)
+            if (node.kind === "leaf") nodes[index] = { case: "panel", value: node.id }
+            else if (node.kind === "split") {
+                nodes[index] = { case: "split", value: { id: node.id, vertical: node.vertical, ratio: node.ratio,
+                    first: flatten(node.first, depth + 1), second: flatten(node.second, depth + 1) } }
+            } else throw new Error(`Invalid saved BSP node kind '${node.kind}'`)
+            return index
+        }
+        if (!Object.hasOwn(workspace, "tree") || !Object.hasOwn(workspace, "focused")) throw new Error("Saved workspace tree/focus is required")
+        return { id: workspace.id, name: workspace.name, focused: workspace.focused,
+            root: workspace.tree === null ? null : flatten(workspace.tree, 1), nodes }
+    })
+    return { version: 2, revision: value.revision, width: value.width, height: value.height, gap: value.gap,
+        "min-width": value.min_width, "min-height": value.min_height, "next-split-id": value.next_split_id,
+        "active-workspace": value.active_workspace, workspaces }
 }
 export class EngineSession {
-    constructor(invoke) { this.invoke = invoke; this.state = null; this.snapshot = null; this.queue = new SerialQueue() }
-    run(operation) { return this.queue.run(operation) }
-    async evaluate(command) {
-        return parseEngineResponse(await this.invoke(this.state === null ? "" : JSON.stringify(this.state), JSON.stringify(command)))
+    constructor(invoke) {
+        this.invoke = invoke
+        this.document = null
+        this.snapshot = null
+        this.queue = new SerialQueue()
     }
-    accept(result) { this.state = result.state; this.snapshot = result.snapshot }
-    async request(command, commit = true) {
-        const result = await this.evaluate(command)
+    run(operation) { return this.queue.run(operation) }
+    requireDocument() {
+        if (this.document === null) throw new Error("Layout is not initialized")
+    }
+    async initialize(width, height, config) {
+        const result = validateEngineResponse(await this.invoke("initialize", width, height, config))
+        this.accept(result)
+        return result.snapshot
+    }
+    async readSnapshot() {
+        this.requireDocument()
+        const snapshot = validateSnapshot(await this.invoke("get-snapshot", this.document))
+        this.snapshot = snapshot
+        return snapshot
+    }
+    async evaluate(method, ...args) {
+        this.requireDocument()
+        return validateEngineResponse(await this.invoke(method, this.document, ...args))
+    }
+    accept(result) { this.document = result.document; this.snapshot = result.snapshot }
+    async request(method, args = [], commit = true) {
+        const result = await this.evaluate(method, ...args)
         if (commit) this.accept(result)
         return result.snapshot
     }
@@ -149,7 +211,7 @@ export class ResizeHandle extends HTMLElement {
             if (position === null) return
             event.preventDefault()
             this.abortDrag()
-            void this.owner.execute({ op: "resize-divider", split_id: this.split.id, position })
+            void this.owner.resizeDivider({ splitId: this.split.id, position })
         })
     }
     connectedCallback() {
@@ -166,7 +228,7 @@ export class ResizeHandle extends HTMLElement {
         this.gesture = {
             pointerId: event.pointerId,
             split: this.split,
-            workspace: this.owner.session.snapshot.active_workspace,
+            workspace: this.owner.session.snapshot["active-workspace"],
             offset: this.split.vertical ? event.clientX - bounds.left - this.split.x : event.clientY - bounds.top - this.split.y,
             position: null,
             frame: 0,
@@ -196,10 +258,10 @@ export class ResizeHandle extends HTMLElement {
         const position = gesture.position
         gesture.position = null
         const current = () => this.gesture === gesture && !gesture.cancelled && this.isConnected &&
-            this.owner.session.snapshot.active_workspace === gesture.workspace
+            this.owner.session.snapshot["active-workspace"] === gesture.workspace
         const operation = this.owner.session.run(async () => {
             if (!current()) return
-            await this.owner.command({ op: "resize-divider", split_id: gesture.split.id, position }, new Map(), current)
+            await this.owner.mutate("resize-divider", [gesture.split.id, position], new Map(), current)
         })
         gesture.inFlight = operation
         try {
@@ -223,7 +285,7 @@ export class ResizeHandle extends HTMLElement {
                 await this.owner.session.run(async () => {
                     if (this.gesture !== gesture) return
                     this.gesture = null
-                    await this.owner.command({ op: "set-split-ratio", split_id: gesture.split.id, ratio: gesture.split.ratio })
+                    await this.owner.mutate("set-split-ratio", [gesture.split.id, gesture.split.ratio])
                 })
             } else {
                 gesture.position = this.position(event, gesture)
@@ -248,15 +310,17 @@ export class UiLayout extends HTMLElement {
         super()
         this.ready = false; this.viewRegistry = new Map(); this.content = new Map(); this.workspaceNodes = new Map()
         this.handles = new Map()
-        this.session = new EngineSession(async (state, command) => unwrap(await runtime.invoke("layout2/layout::execute", state, command), "Layout execute"))
+        this.session = new EngineSession(async (method, ...args) =>
+            unwrapLayoutResult(await runtime.invoke(`layout2/layout::${method}`, ...args)),
+        )
         this.api = {}
-        for (const name of ["execute", "snapshot", "create", "close", "focusDirection", "moveDirection", "move", "resize", "arrange", "equalize", "workspaceCreate", "workspaceSwitch", "workspaceNext", "workspaceRename", "moveToWorkspace", "projectSave", "ping", "refresh"])
+        for (const name of ["snapshot", "create", "close", "focus", "focusDirection", "moveDirection", "move", "moveToRoot", "swap", "resize", "setSplitRatio", "resizeDivider", "setBounds", "arrange", "equalize", "workspaceCreate", "workspaceSwitch", "workspaceNext", "workspaceRename", "moveToWorkspace", "projectSave", "ping", "refresh"])
             this.api[name] = input => this[name](input)
         this.resizeObserver = new ResizeObserver(() => {
             if (!this.ready) return
             void this.session.run(async () => {
                 const bounds = this.bounds(), snapshot = this.session.snapshot
-                if (bounds.width !== snapshot.width || bounds.height !== snapshot.height) await this.command({ op: "set-bounds", ...bounds })
+                if (bounds.width !== snapshot.width || bounds.height !== snapshot.height) await this.mutate("set-bounds", [bounds.width, bounds.height])
             })
         })
     }
@@ -276,18 +340,26 @@ export class UiLayout extends HTMLElement {
             this.settings.views = Object.assign(Object.create(null), this.settings.views)
             this.buildChrome()
             runtime.register({ id: "ui.layout", methods: this.api })
-            this.session.state = this.settings.state
-            if (this.session.state === null) {
+            this.session.document = migrateSavedDocument(this.settings.state)
+            const bounds = this.bounds()
+            if (this.session.document === null) {
                 this.settings.views = Object.assign(Object.create(null), { "panel-1": { tag: this.settings.defaultView } })
-                await this.session.request({ op: "init", ...this.bounds(), ...this.settings.engine })
-                await this.session.request({ op: "create", id: "panel-1" })
+                await this.session.initialize(bounds.width, bounds.height, {
+                    gap: this.settings.engine.gap,
+                    "min-width": this.settings.engine.min_width,
+                    "min-height": this.settings.engine.min_height,
+                })
+                await this.session.request("create-panel", ["panel-1", null, "right", 0.5])
             } else {
-                await this.session.request({ op: "snapshot" })
+                await this.session.readSnapshot()
                 for (const workspace of this.session.snapshot.workspaces)
-                    for (const id of workspace.panels) if (!Object.hasOwn(this.settings.views, id)) throw new Error(`Missing saved View for '${id}'`)
-                await this.session.request({ op: "set-bounds", ...this.bounds() })
+                    for (const id of workspace.panels)
+                        if (!Object.hasOwn(this.settings.views, id)) throw new Error(`Missing saved View for '${id}'`)
+                await this.session.request("set-bounds", [bounds.width, bounds.height])
             }
-            await this.render(); this.ready = true; this.resizeObserver.observe(this.viewport)
+            await this.render()
+            this.ready = true
+            this.resizeObserver.observe(this.viewport)
             return { ok: structuredClone(this.session.snapshot) }
         })
     }
@@ -351,9 +423,9 @@ export class UiLayout extends HTMLElement {
             return { ok: true }
         })
     }
-    async command(command, additions = new Map(), isCurrent = () => true) {
-        if (command.op !== "resize-divider" && command.op !== "snapshot") this.cancelHandleDrags()
-        const result = await this.session.evaluate(command), prepared = []
+    async mutate(method, args = [], additions = new Map(), isCurrent = () => true) {
+        if (method !== "resize-divider") this.cancelHandleDrags()
+        const result = await this.session.evaluate(method, ...args), prepared = []
         for (const workspace of result.snapshot.workspaces) {
             for (const id of workspace.panels) {
                 if (this.content.has(id)) continue
@@ -361,66 +433,88 @@ export class UiLayout extends HTMLElement {
                 prepared.push({ id, spec, node: await this.createView(spec) })
             }
         }
-        // Accept only after all required View factories have succeeded.
         if (!isCurrent()) return { ok: structuredClone(this.session.snapshot) }
         this.session.accept(result)
-        for (const { id, spec, node } of prepared) { this.settings.views[id] = spec; this.attachPanel(id, node) }
+        for (const { id, spec, node } of prepared) {
+            this.settings.views[id] = spec
+            this.attachPanel(id, node)
+        }
         await this.render()
         return { ok: structuredClone(this.session.snapshot) }
     }
-    execute(input) {
-        const command = parseCommand(input)
-        return this.session.run(async () => { this.requireReady(); return this.command(command) })
+    operation(method, ...args) {
+        return this.session.run(async () => { this.requireReady(); return this.mutate(method, args) })
     }
-    snapshot() { return this.execute({ op: "snapshot" }) }
-    ping() { return this.session.run(() => { this.requireReady(); return { ok: { revision: this.session.snapshot.revision } } }) }
-    refresh() { return this.session.run(async () => { this.requireReady(); await this.render(); return { ok: structuredClone(this.session.snapshot) } }) }
-    create({ side = "right", tag } = {}) {
+    snapshot() {
+        return this.session.run(async () => { this.requireReady(); return { ok: structuredClone(await this.session.readSnapshot()) } })
+    }
+    ping() {
+        return this.session.run(() => { this.requireReady(); return { ok: { revision: this.session.snapshot.revision } } })
+    }
+    refresh() {
+        return this.session.run(async () => { this.requireReady(); await this.render(); return { ok: structuredClone(this.session.snapshot) } })
+    }
+    create({ side = "right", tag, share = 0.5 } = {}) {
         return this.session.run(async () => {
             this.requireReady()
             let index = 1
             while (this.content.has(`panel-${index}`)) index++
             const id = `panel-${index}`, spec = { tag: tag === undefined ? this.settings.defaultView : tag }
-            return this.command({ op: "create", id, ...(this.session.snapshot.focused ? { target: this.focused(), side } : {}) }, new Map([[id, spec]]))
+            return this.mutate("create-panel", [id, this.session.snapshot.focused, side, share], new Map([[id, spec]]))
         })
     }
-    close() { return this.focusCommand("close") }
-    focusDirection({ side }) { return this.execute({ op: "focus-direction", side }) }
-    focusPanel(id) { return this.session.run(async () => this.session.snapshot.focused === id ? { ok: structuredClone(this.session.snapshot) } : this.command({ op: "focus", id })) }
-    move(input) { return this.execute({ ...object(input, "move"), op: "move" }) }
+    focusedOperation(method, ...args) {
+        return this.session.run(async () => { this.requireReady(); return this.mutate(method, [this.focused(), ...args]) })
+    }
+    close() { return this.focusedOperation("close-panel") }
+    focus({ id }) { return this.operation("focus-panel", id) }
+    focusDirection({ side }) { return this.operation("focus-direction", side) }
+    focusPanel(id) {
+        return this.session.run(async () => {
+            this.requireReady()
+            return this.session.snapshot.focused === id ? { ok: structuredClone(this.session.snapshot) } : this.mutate("focus-panel", [id])
+        })
+    }
+    move({ id, target, side, share = 0.5 }) { return this.operation("move-panel", id, target, side, share) }
+    moveToRoot({ id, side, share = 0.5 }) { return this.operation("move-panel-to-root", id, side, share) }
+    swap({ first, second }) { return this.operation("swap-panels", first, second) }
     moveDirection({ side }) {
         return this.session.run(async () => {
             this.requireReady()
-            const id = this.focused(), probe = await this.session.request({ op: "focus-direction", side }, false)
+            const id = this.focused(), probe = await this.session.request("focus-direction", [side], false)
             if (!probe.focused || probe.focused === id) throw new Error(`No panel ${side} of focused panel`)
-            return this.command({ op: "move", id, target: probe.focused, side })
+            return this.mutate("move-panel", [id, probe.focused, side, 0.5])
         })
     }
-    focusCommand(op, fields = {}) { return this.session.run(async () => { this.requireReady(); return this.command(focusedCommand(op, this.focused(), fields)) }) }
-    resize({ side, delta }) { return this.focusCommand("resize", { side, delta }) }
-    arrange({ kind }) { return this.execute({ op: "arrange", kind }) }
-    equalize() { return this.execute({ op: "equalize" }) }
+    resize({ side, delta }) { return this.focusedOperation("resize-panel", side, delta) }
+    setSplitRatio({ splitId, ratio }) { return this.operation("set-split-ratio", splitId, ratio) }
+    resizeDivider({ splitId, position }) { return this.operation("resize-divider", splitId, position) }
+    setBounds({ width, height }) { return this.operation("set-bounds", width, height) }
+    arrange({ kind }) { return this.operation("arrange", kind) }
+    equalize() { return this.operation("equalize") }
     workspaceCreate({ name } = {}) {
         return this.session.run(async () => {
             this.requireReady()
             let index = 1
             const ids = new Set(this.session.snapshot.workspaces.map(workspace => workspace.id))
             while (ids.has(`workspace-${index}`)) index++
-            return this.command({ op: "workspace-create", id: `workspace-${index}`, name: name === undefined ? `Workspace ${index}` : name })
+            return this.mutate("create-workspace", [`workspace-${index}`, name === undefined ? `Workspace ${index}` : name])
         })
     }
-    workspaceSwitch({ id }) { return this.execute({ op: "workspace-switch", id }) }
+    workspaceSwitch({ id }) { return this.operation("switch-workspace", id) }
     workspaceNext({ delta = 1 } = {}) {
         return this.session.run(async () => {
             this.requireReady()
             if (!Number.isInteger(delta)) throw new Error("Workspace delta must be an integer")
             const snapshot = this.session.snapshot, length = snapshot.workspaces.length
-            const index = snapshot.workspaces.findIndex(workspace => workspace.id === snapshot.active_workspace)
-            return this.command({ op: "workspace-switch", id: snapshot.workspaces[((index + delta) % length + length) % length].id })
+            const index = snapshot.workspaces.findIndex(workspace => workspace.id === snapshot["active-workspace"])
+            return this.mutate("switch-workspace", [snapshot.workspaces[((index + delta) % length + length) % length].id])
         })
     }
-    workspaceRename({ name }) { return this.session.run(async () => { this.requireReady(); return this.command({ op: "workspace-rename", id: this.session.snapshot.active_workspace, name }) }) }
-    moveToWorkspace({ workspace }) { return this.focusCommand("workspace-move", { workspace }) }
+    workspaceRename({ name }) {
+        return this.session.run(async () => { this.requireReady(); return this.mutate("rename-workspace", [this.session.snapshot["active-workspace"], name]) })
+    }
+    moveToWorkspace({ workspace }) { return this.focusedOperation("move-panel-to-workspace", workspace) }
     attachPanel(id, view) {
         const chrome = document.createElement("view-area")
         chrome.owner = this; chrome.panel = id; chrome.id = `layout2-panel-${encodeURIComponent(id)}`; chrome.setAttribute("panel", id); chrome.tabIndex = -1; chrome.append(view)
@@ -453,10 +547,10 @@ export class UiLayout extends HTMLElement {
         this.renderWorkspaces(snapshot)
         this.status.textContent = snapshot.constrained ? "Layout constrained: enlarge the window to show panels." : ""
         if (!snapshot.constrained && snapshot.focused !== null &&
-            (this.lastFocusedPanel !== snapshot.focused || this.lastWorkspace !== snapshot.active_workspace || this.wasConstrained)) {
+            (this.lastFocusedPanel !== snapshot.focused || this.lastWorkspace !== snapshot["active-workspace"] || this.wasConstrained)) {
             this.content.get(snapshot.focused).focus({ preventScroll: true })
         }
-        this.lastFocusedPanel = snapshot.focused; this.lastWorkspace = snapshot.active_workspace; this.wasConstrained = snapshot.constrained
+        this.lastFocusedPanel = snapshot.focused; this.lastWorkspace = snapshot["active-workspace"]; this.wasConstrained = snapshot.constrained
         await this.activateFocusedView()
     }
     cancelHandleDrags() {
@@ -514,7 +608,7 @@ export class UiLayout extends HTMLElement {
                 })
                 this.tabs.append(tab); this.viewport.append(panel); nodes = { tab, panel }; this.workspaceNodes.set(workspace.id, nodes)
             }
-            const active = workspace.id === snapshot.active_workspace
+            const active = workspace.id === snapshot["active-workspace"]
             nodes.tab.textContent = workspace.name; nodes.tab.setAttribute("aria-selected", String(active)); nodes.tab.tabIndex = active ? 0 : -1
             nodes.panel.hidden = !active
             // Logical ARIA ownership groups panels without reparenting their DOM.
@@ -547,7 +641,7 @@ export class UiLayout extends HTMLElement {
                 const attrs = savedAttributes(this.settings.views[id].attrs, [...view.attributes].map(attr => [attr.name, attr.value]))
                 views[id] = { tag: view.tagName.toLowerCase(), attrs }
             }
-            const saved = validateLayout({ state: this.session.state, views, defaultView: this.settings.defaultView, engine: this.settings.engine }, this.viewRegistry)
+            const saved = validateLayout({ state: this.session.document, views, defaultView: this.settings.defaultView, engine: this.settings.engine }, this.viewRegistry)
             const service = object(runtime.config.ui.services["ui-layout"], "ui-layout service")
             object(service.config, "ui-layout config").layout = saved
             return { ok: true }

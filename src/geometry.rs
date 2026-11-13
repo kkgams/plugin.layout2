@@ -22,26 +22,7 @@ pub(crate) struct Split {
     pub rect: Rect,
     pub ratio: f64,
 }
-#[derive(Debug, Serialize)]
-struct WorkspaceSummary {
-    id: String,
-    name: String,
-    focused: Option<String>,
-    panels: Vec<String>,
-}
-#[derive(Debug, Serialize)]
-pub(crate) struct Snapshot {
-    revision: u64,
-    width: u32,
-    height: u32,
-    gap: u32,
-    constrained: bool,
-    active_workspace: String,
-    focused: Option<String>,
-    workspaces: Vec<WorkspaceSummary>,
-    panels: Vec<Panel>,
-    splits: Vec<Split>,
-}
+use crate::{LayoutSnapshot, PlacedPanel, SplitGuide, WorkspaceSummary};
 pub(crate) fn bounds(s: &State) -> Rect {
     Rect {
         x: 0,
@@ -193,14 +174,14 @@ fn place(
     }
     Ok(())
 }
-pub(crate) fn snapshot(s: &State) -> Result<Snapshot> {
+pub(crate) fn snapshot(s: &State) -> Result<LayoutSnapshot> {
     let i = s.active_index();
     let (constrained, panels, splits) = match layout(s, i) {
         Ok((p, g)) => (false, p, g),
         Err(e) if e.code == "insufficient-space" => (true, Vec::new(), Vec::new()),
         Err(e) => return Err(e),
     };
-    Ok(Snapshot {
+    Ok(LayoutSnapshot {
         revision: s.revision,
         width: s.width,
         height: s.height,
@@ -218,7 +199,28 @@ pub(crate) fn snapshot(s: &State) -> Result<Snapshot> {
                 panels: w.panels(),
             })
             .collect(),
-        panels,
-        splits,
+        panels: panels
+            .into_iter()
+            .map(|p| PlacedPanel {
+                id: p.id,
+                x: p.rect.x,
+                y: p.rect.y,
+                w: p.rect.w,
+                h: p.rect.h,
+                focused: p.focused,
+            })
+            .collect(),
+        splits: splits
+            .into_iter()
+            .map(|s| SplitGuide {
+                id: s.id,
+                vertical: s.vertical,
+                ratio: s.ratio,
+                x: s.rect.x,
+                y: s.rect.y,
+                w: s.rect.w,
+                h: s.rect.h,
+            })
+            .collect(),
     })
 }

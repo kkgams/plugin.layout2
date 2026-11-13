@@ -1,12 +1,109 @@
-package gams:layout2@0.1.0;
+package gams:layout2@0.2.0;
 
-/// Caller-owned BSP/workspace documents. JSON schemas are documented in docs/.
+/// Stateless BSP layout operations. Callers retain each returned document.
+/// Version 0.2 replaces the JSON-string execute export; update the paired
+/// UI Service and component together.
 interface layout {
-    /// Empty state is accepted only with init. Errors leave caller state unchanged.
-    /// Success returns JSON { state, snapshot }; state is supplied on the next call.
-    execute: func(state: string, command: string) -> result<string, string>;
+    enum side { left, right, up, down }
+    enum arrangement { horizontal, vertical, grid }
+    enum error-code {
+        invalid-argument,
+        invalid-document,
+        unknown-panel,
+        unknown-workspace,
+        unknown-split,
+        duplicate-panel,
+        duplicate-workspace,
+        insufficient-space,
+        limit-exceeded,
+        internal-error,
+    }
+    record layout-error { code: error-code, message: string }
+    record layout-config { gap: u32, min-width: u32, min-height: u32 }
+
+    /// Split IDs remain stable. Child references are indices in this
+    /// workspace's nodes list, not split IDs. Ratios describe the first child.
+    record split-node {
+        id: u64,
+        vertical: bool,
+        ratio: f64,
+        first: u32,
+        second: u32,
+    }
+    variant layout-node { panel(string), split(split-node) }
+    record workspace {
+        id: string,
+        name: string,
+        focused: option<string>,
+        root: option<u32>,
+        nodes: list<layout-node>,
+    }
+    /// Version 2 uses flat, validated trees. Cycles, shared children, orphan
+    /// nodes, duplicate IDs and invalid focus references are rejected.
+    record layout-document {
+        version: u32,
+        revision: u64,
+        width: u32,
+        height: u32,
+        gap: u32,
+        min-width: u32,
+        min-height: u32,
+        next-split-id: u64,
+        active-workspace: string,
+        workspaces: list<workspace>,
+    }
+    record placed-panel { id: string, x: u32, y: u32, w: u32, h: u32, focused: bool }
+    record split-guide { id: u64, vertical: bool, x: u32, y: u32, w: u32, h: u32, ratio: f64 }
+    record workspace-summary { id: string, name: string, focused: option<string>, panels: list<string> }
+    record layout-snapshot {
+        revision: u64,
+        width: u32,
+        height: u32,
+        gap: u32,
+        constrained: bool,
+        active-workspace: string,
+        focused: option<string>,
+        workspaces: list<workspace-summary>,
+        panels: list<placed-panel>,
+        splits: list<split-guide>,
+    }
+    record layout-response { document: layout-document, snapshot: layout-snapshot }
+
+    /// Create an empty Main workspace. Successful mutations increment revision
+    /// once; errors never mutate the caller's document.
+    initialize: func(width: u32, height: u32, config: layout-config) -> result<layout-response, layout-error>;
+    /// Validate a document and compute active geometry without changing revision.
+    /// Constrained viewports retain the tree but emit no panel/guide rectangles.
+    get-snapshot: func(document: layout-document) -> result<layout-snapshot, layout-error>;
+    /// Insert a new panel. With no target, use the active focus, or create the
+    /// first root panel. Share is the new panel's fraction, strictly (0,1).
+    create-panel: func(document: layout-document, id: string, target: option<string>, side: side, share: f64) -> result<layout-response, layout-error>;
+    /// Remove a panel, collapse its parent and select a deterministic successor.
+    close-panel: func(document: layout-document, id: string) -> result<layout-response, layout-error>;
+    focus-panel: func(document: layout-document, id: string) -> result<layout-response, layout-error>;
+    /// Move focus across a facing edge; do not wrap or jump diagonally.
+    focus-direction: func(document: layout-document, side: side) -> result<layout-response, layout-error>;
+    move-panel: func(document: layout-document, id: string, target: string, side: side, share: f64) -> result<layout-response, layout-error>;
+    move-panel-to-root: func(document: layout-document, id: string, side: side, share: f64) -> result<layout-response, layout-error>;
+    swap-panels: func(document: layout-document, first: string, second: string) -> result<layout-response, layout-error>;
+    /// Positive delta grows the selected edge in viewport pixels. An invalid
+    /// minimum-size result is rejected rather than clamped.
+    resize-panel: func(document: layout-document, id: string, side: side, delta: s32) -> result<layout-response, layout-error>;
+    /// Set a strict absolute left/top fraction; reject invalid geometry.
+    set-split-ratio: func(document: layout-document, split-id: u64, ratio: f64) -> result<layout-response, layout-error>;
+    /// Move a divider to absolute viewport x/y pixels. Clamp to every nested
+    /// panel's minimum while retaining descendant ratios.
+    resize-divider: func(document: layout-document, split-id: u64, position: s32) -> result<layout-response, layout-error>;
+    /// Set each split ratio to one half, not necessarily equal final panel sizes.
+    equalize: func(document: layout-document) -> result<layout-response, layout-error>;
+    arrange: func(document: layout-document, kind: arrangement) -> result<layout-response, layout-error>;
+    set-bounds: func(document: layout-document, width: u32, height: u32) -> result<layout-response, layout-error>;
+    /// Create an empty workspace and activate it.
+    create-workspace: func(document: layout-document, id: string, name: string) -> result<layout-response, layout-error>;
+    switch-workspace: func(document: layout-document, id: string) -> result<layout-response, layout-error>;
+    rename-workspace: func(document: layout-document, id: string, name: string) -> result<layout-response, layout-error>;
+    /// Transfer the panel without changing the active workspace.
+    move-panel-to-workspace: func(document: layout-document, id: string, workspace: string) -> result<layout-response, layout-error>;
 }
 
-world layout-plugin {
-    export layout;
-}
+world layout-plugin { export layout; }

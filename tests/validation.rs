@@ -1,131 +1,249 @@
-use gams_layout2::execute;
-use serde_json::{json, Value};
-fn initial() -> Value {
-    serde_json::from_str(
-        &execute(
-            "",
-            r#"{"op":"init","width":1000,"height":1000,"gap":6,"min_width":10,"min_height":10}"#,
-        )
-        .unwrap(),
+use gams_layout2::*;
+
+const MAX_SAFE: u64 = 9_007_199_254_740_991;
+fn initial() -> LayoutDocument {
+    initialize(
+        1000,
+        1000,
+        LayoutConfig {
+            gap: 6,
+            min_width: 10,
+            min_height: 10,
+        },
     )
     .unwrap()
+    .document
 }
-fn call(state: &Value, c: Value) -> Value {
-    serde_json::from_str(&execute(&state.to_string(), &c.to_string()).unwrap()).unwrap()
+fn populated() -> LayoutDocument {
+    let d = create_panel(initial(), "a".into(), None, Side::Right, 0.5).unwrap();
+    create_panel(d.document, "b".into(), None, Side::Right, 0.5)
+        .unwrap()
+        .document
 }
-fn rejected(state: &Value, c: Value, code: &str) {
-    let e: Value =
-        serde_json::from_str(&execute(&state.to_string(), &c.to_string()).unwrap_err()).unwrap();
-    assert_eq!(e["code"], code, "{e}");
+fn invalid(d: LayoutDocument) {
+    let before = d.clone();
+    let error = get_snapshot(d.clone()).unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidDocument, "{}", error.message);
+    assert_eq!(d, before);
 }
-fn populated() -> Value {
-    let d = initial();
-    let d = call(&d["state"], json!({"op":"create","id":"a"}));
-    call(&d["state"], json!({"op":"create","id":"b"}))
+fn rejected(d: &LayoutDocument, result: Result<LayoutResponse, LayoutError>, code: ErrorCode) {
+    let before = d.clone();
+    let error = result.unwrap_err();
+    assert_eq!(error.code, code, "{}", error.message);
+    assert!(!error.message.is_empty());
+    assert_eq!(*d, before);
 }
+fn split_mut(d: &mut LayoutDocument) -> &mut SplitNode {
+    d.workspaces[0]
+        .nodes
+        .iter_mut()
+        .find_map(|node| match node {
+            LayoutNode::Split(s) => Some(s),
+            _ => None,
+        })
+        .unwrap()
+}
+
+#[test]
+fn flat_graph_rejects_cycles_shared_children_out_of_range_orphans_and_invalid_root() {
+    let base = populated();
+    let mut d = base.clone();
+    let root = d.workspaces[0].root.unwrap();
+    split_mut(&mut d).first = root;
+    invalid(d);
+    let mut d = base.clone();
+    let split = split_mut(&mut d);
+    split.second = split.first;
+    invalid(d);
+    let mut d = base.clone();
+    split_mut(&mut d).second = u32::MAX;
+    invalid(d);
+    let mut d = base.clone();
+    d.workspaces[0]
+        .nodes
+        .push(LayoutNode::Panel("orphan".into()));
+    invalid(d);
+    let mut d = base.clone();
+    d.workspaces[0].root = Some(u32::MAX);
+    invalid(d);
+    let mut d = base;
+    d.workspaces[0].root = None;
+    invalid(d);
+    let mut d = initial();
+    d.workspaces[0].root = Some(0);
+    invalid(d);
+}
+
 #[test]
 fn duplicate_ids_bad_focus_and_counter_rejected() {
-    let d = populated();
-    let base = d["state"].clone();
-    let mut s = base.clone();
-    s["workspaces"][0]["tree"]["second"]["id"] = json!("a");
-    rejected(&s, json!({"op":"snapshot"}), "invalid-state");
-    let mut s = base.clone();
-    s["workspaces"][0]["focused"] = json!("missing");
-    rejected(&s, json!({"op":"snapshot"}), "invalid-state");
-    let mut s = base.clone();
-    s["next_split_id"] = json!(1);
-    rejected(&s, json!({"op":"snapshot"}), "invalid-state");
-    let mut s = base.clone();
-    let w = s["workspaces"][0].clone();
-    s["workspaces"].as_array_mut().unwrap().push(w);
-    s["workspaces"][1]["id"] = json!("other");
-    rejected(&s, json!({"op":"snapshot"}), "invalid-state");
-    for key in ["focused", "tree"] {
-        let mut s = base.clone();
-        s["workspaces"][0].as_object_mut().unwrap().remove(key);
-        rejected(&s, json!({"op":"snapshot"}), "invalid-state");
+    let base = populated();
+    let mut d = base.clone();
+    for node in &mut d.workspaces[0].nodes {
+        if let LayoutNode::Panel(id) = node {
+            *id = "a".into();
+        }
     }
-    for key in ["revision", "next_split_id"] {
-        let mut s = base.clone();
-        s[key] = json!(9_007_199_254_740_992_u64);
-        rejected(&s, json!({"op":"snapshot"}), "invalid-state");
-    }
-    let mut s = base.clone();
-    s["revision"] = json!(9_007_199_254_740_991_u64);
-    rejected(&s, json!({"op":"focus","id":"a"}), "limit-exceeded");
-    assert_eq!(call(&s, json!({"op":"snapshot"}))["state"], s);
-    let mut s = base;
-    s["next_split_id"] = json!(9_007_199_254_740_991_u64);
-    rejected(&s, json!({"op":"create","id":"c"}), "limit-exceeded");
+    invalid(d);
+    let mut d = base.clone();
+    d.workspaces[0].focused = Some("missing".into());
+    invalid(d);
+    let mut d = base.clone();
+    d.next_split_id = 1;
+    invalid(d);
+    let mut d = base.clone();
+    let mut workspace = d.workspaces[0].clone();
+    workspace.id = "other".into();
+    d.workspaces.push(workspace);
+    invalid(d);
+    let mut d = base.clone();
+    d.workspaces.push(Workspace {
+        id: "main".into(),
+        name: "Duplicate".into(),
+        focused: None,
+        root: None,
+        nodes: Vec::new(),
+    });
+    invalid(d);
+    let mut d = base.clone();
+    d.active_workspace = "missing".into();
+    invalid(d);
+    let mut d = base.clone();
+    d.version = 900;
+    invalid(d);
+    let mut d = base.clone();
+    d.revision = MAX_SAFE + 1;
+    invalid(d);
+    let mut d = base.clone();
+    d.next_split_id = MAX_SAFE + 1;
+    invalid(d);
+    let mut d = base.clone();
+    d.revision = MAX_SAFE;
+    assert!(get_snapshot(d.clone()).is_ok());
+    rejected(
+        &d,
+        focus_panel(d.clone(), "a".into()),
+        ErrorCode::LimitExceeded,
+    );
+    let mut d = base;
+    d.next_split_id = MAX_SAFE;
+    assert!(get_snapshot(d.clone()).is_ok());
+    rejected(
+        &d,
+        create_panel(d.clone(), "c".into(), None, Side::Right, 0.5),
+        ErrorCode::LimitExceeded,
+    );
 }
+
 #[test]
-fn malformed_commands_and_extreme_resize_are_safe() {
-    let d = populated();
-    let s = &d["state"];
-    for c in [
-        json!({"op":"set-bounds","width":1_000_001,"height":1}),
-        json!({"op":"create","id":"c","side":"diagonal"}),
-        json!({"op":"create","id":"c","target":1}),
-        json!({"op":"resize","id":"a","side":"right","delta":1.5}),
-        json!({"op":"set-split-ratio","split_id":9_007_199_254_740_992_u64,"ratio":0.5}),
+fn invalid_identifiers_minima_fractions_and_extreme_resize_are_safe() {
+    for config in [
+        LayoutConfig {
+            gap: 6,
+            min_width: 0,
+            min_height: 10,
+        },
+        LayoutConfig {
+            gap: 6,
+            min_width: 10,
+            min_height: 0,
+        },
+        LayoutConfig {
+            gap: 1_000_001,
+            min_width: 10,
+            min_height: 10,
+        },
     ] {
-        rejected(s, c, "invalid-command");
+        assert_eq!(
+            initialize(1000, 1000, config).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
     }
-    for side in ["right", "left"] {
-        let id = if side == "right" { "a" } else { "b" };
+    let d = populated();
+    rejected(
+        &d,
+        set_bounds(d.clone(), 1_000_001, 1),
+        ErrorCode::InvalidArgument,
+    );
+    rejected(
+        &d,
+        create_panel(d.clone(), "".into(), None, Side::Right, 0.5),
+        ErrorCode::InvalidArgument,
+    );
+    rejected(
+        &d,
+        create_panel(d.clone(), "a".into(), None, Side::Right, 0.5),
+        ErrorCode::DuplicatePanel,
+    );
+    rejected(
+        &d,
+        create_panel(
+            d.clone(),
+            "c".into(),
+            Some("missing".into()),
+            Side::Right,
+            0.5,
+        ),
+        ErrorCode::UnknownPanel,
+    );
+    rejected(
+        &d,
+        create_workspace(d.clone(), "".into(), "Other".into()),
+        ErrorCode::InvalidArgument,
+    );
+    rejected(
+        &d,
+        create_workspace(d.clone(), "main".into(), "Other".into()),
+        ErrorCode::DuplicateWorkspace,
+    );
+    rejected(
+        &d,
+        switch_workspace(d.clone(), "missing".into()),
+        ErrorCode::UnknownWorkspace,
+    );
+    rejected(
+        &d,
+        rename_workspace(d.clone(), "missing".into(), "Other".into()),
+        ErrorCode::UnknownWorkspace,
+    );
+    for fraction in [0.0, 1.0, -0.5, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        rejected(
+            &d,
+            create_panel(d.clone(), "c".into(), None, Side::Right, fraction),
+            ErrorCode::InvalidArgument,
+        );
+        rejected(
+            &d,
+            set_split_ratio(d.clone(), 1, fraction),
+            ErrorCode::InvalidArgument,
+        );
+        let mut malformed = d.clone();
+        split_mut(&mut malformed).ratio = fraction;
+        // NaN is not reflexively equal; assert the error without comparing it.
+        assert_eq!(
+            get_snapshot(malformed).unwrap_err().code,
+            ErrorCode::InvalidDocument
+        );
+    }
+    for (side, id) in [(Side::Right, "a"), (Side::Left, "b")] {
         for delta in [i32::MIN, i32::MAX] {
             rejected(
-                s,
-                json!({"op":"resize","id":id,"side":side,"delta":delta}),
-                "insufficient-space",
+                &d,
+                resize_panel(d.clone(), id.into(), side, delta),
+                ErrorCode::InsufficientSpace,
             );
         }
     }
     rejected(
-        s,
-        json!({"op":"create","id":"c","ratio":0.000001}),
-        "insufficient-space",
+        &d,
+        create_panel(d.clone(), "c".into(), None, Side::Right, 0.000001),
+        ErrorCode::InsufficientSpace,
     );
     rejected(
-        s,
-        json!({"op":"move","id":"a","target":"missing","side":"left"}),
-        "unknown-panel",
+        &d,
+        move_panel(d.clone(), "a".into(), "missing".into(), Side::Left, 0.5),
+        ErrorCode::UnknownPanel,
     );
-    assert_eq!(call(s, json!({"op":"snapshot"})), d);
-}
-#[test]
-fn resize_relevant_ancestor_swap_root_and_noop_revision() {
-    let mut d = populated();
-    d = call(&d["state"], json!({"op":"create","id":"c","side":"down"}));
-    let root = d["snapshot"]["splits"][0]["id"].clone();
-    d = call(
-        &d["state"],
-        json!({"op":"resize","id":"c","side":"left","delta":25}),
-    );
-    assert_eq!(d["snapshot"]["panels"][0]["w"], 472);
-    assert_eq!(d["snapshot"]["splits"][0]["id"], root);
-    d = call(&d["state"], json!({"op":"swap","id":"a","target":"c"}));
-    assert_eq!(d["snapshot"]["panels"][0]["id"], "c");
-    d = call(
-        &d["state"],
-        json!({"op":"move-root","id":"b","side":"up","ratio":0.25}),
-    );
-    assert_eq!(d["snapshot"]["panels"][0]["id"], "b");
-    let rev = d["snapshot"]["revision"].as_u64().unwrap();
-    d = call(
-        &d["state"],
-        json!({"op":"move","id":"b","target":"b","side":"left"}),
-    );
-    assert_eq!(d["snapshot"]["revision"], rev + 1);
-    let id = d["snapshot"]["splits"][0]["id"].clone();
-    d = call(
-        &d["state"],
-        json!({"op":"set-split-ratio","split_id":id,"ratio":0.4}),
-    );
-    assert_eq!(d["snapshot"]["splits"][0]["ratio"], 0.4);
-}
-#[test]
-fn independent_documents_allocate_identically() {
-    assert_eq!(populated(), populated());
+    let before = d.clone();
+    assert!(get_snapshot(d.clone()).is_ok());
+    assert_eq!(d, before);
 }
