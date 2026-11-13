@@ -73,7 +73,8 @@ export class EngineSession {
 export class ViewArea extends HTMLElement {
     constructor() {
         super()
-        this.attachShadow({ mode: "open" }).innerHTML = `<link rel="stylesheet" href="/css/reset.css"><link rel="stylesheet" href="/css/base.css"><style>:host{position:absolute;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0}:host([hidden]){display:none!important}header{flex-shrink:0;display:flex;align-items:center;min-width:0}:host(.active) header{box-shadow:inset 0 0 0 2px var(--accent,Highlight)}main{flex:1;min-width:0;min-height:0;overflow:hidden;display:flex;flex-direction:column}slot:not([name]){display:contents}</style><header part="header"><select part="view-select" class="view-selector" aria-label="Panel View"></select><slot name="header-controls" part="header-controls"></slot></header><main><slot></slot></main>`
+        // Preserve the shared Host/theme header and body layout contract.
+        this.attachShadow({ mode: "open" }).innerHTML = `<link rel="stylesheet" href="/css/reset.css"><link rel="stylesheet" href="/css/base.css"><style>:host{position:absolute}:host([hidden]){display:none!important}:host(.active) header{box-shadow:inset 0 0 0 2px var(--accent,Highlight)}</style><header part="header"><select part="view-select" class="view-selector" aria-label="Panel View"></select><slot name="header-controls" part="header-controls"></slot></header><main><slot></slot></main>`
         this.shadowRoot.querySelector("select").addEventListener("change", event => { void this.owner.replaceView(this.panel, event.target.value) })
         const focus = () => { if (this.owner.ready) void this.owner.focusPanel(this.panel) }
         this.addEventListener("pointerdown", focus); this.addEventListener("focusin", focus)
