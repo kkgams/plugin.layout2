@@ -29,6 +29,7 @@ impl From<model::Error> for LayoutError {
             "duplicate-workspace" => ErrorCode::DuplicateWorkspace,
             "insufficient-space" => ErrorCode::InsufficientSpace,
             "limit-exceeded" => ErrorCode::LimitExceeded,
+            "last-workspace" => ErrorCode::LastWorkspace,
             _ => ErrorCode::InternalError,
         };
         Self {
@@ -250,6 +251,14 @@ pub fn switch_workspace(
     mutate(document, Command::WorkspaceSwitch { id })
 }
 
+/// Remove a workspace and all its panels, retaining at least one workspace.
+pub fn remove_workspace(
+    document: LayoutDocument,
+    id: String,
+) -> Result<LayoutResponse, LayoutError> {
+    mutate(document, Command::WorkspaceRemove { id })
+}
+
 pub fn rename_workspace(
     document: LayoutDocument,
     id: String,
@@ -382,6 +391,12 @@ mod component {
             id: String,
         ) -> Result<LayoutResponse, LayoutError> {
             super::switch_workspace(document, id)
+        }
+        fn remove_workspace(
+            document: LayoutDocument,
+            id: String,
+        ) -> Result<LayoutResponse, LayoutError> {
+            super::remove_workspace(document, id)
         }
         fn rename_workspace(
             document: LayoutDocument,

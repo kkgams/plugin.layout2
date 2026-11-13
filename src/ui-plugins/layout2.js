@@ -314,7 +314,7 @@ export class UiLayout extends HTMLElement {
             unwrapLayoutResult(await runtime.invoke(`layout2/layout::${method}`, ...args)),
         )
         this.api = {}
-        for (const name of ["snapshot", "create", "close", "focus", "focusDirection", "moveDirection", "move", "moveToRoot", "swap", "resize", "setSplitRatio", "resizeDivider", "setBounds", "arrange", "equalize", "workspaceCreate", "workspaceSwitch", "workspaceNext", "workspaceRename", "moveToWorkspace", "projectSave", "ping", "refresh"])
+        for (const name of ["snapshot", "create", "close", "focus", "focusDirection", "moveDirection", "move", "moveToRoot", "swap", "resize", "setSplitRatio", "resizeDivider", "setBounds", "arrange", "equalize", "workspaceCreate", "workspaceSwitch", "workspaceNext", "workspaceRename", "workspaceRemove", "moveToWorkspace", "projectSave", "ping", "refresh"])
             this.api[name] = input => this[name](input)
         this.resizeObserver = new ResizeObserver(() => {
             if (!this.ready) return
@@ -371,12 +371,14 @@ export class UiLayout extends HTMLElement {
             const node = document.createElement("button")
             node.type = "button"; node.textContent = text
             node.addEventListener("click", () => { void action() }); this.toolbar.append(node)
+            return node
         }
         button("Split right", () => this.create({ side: "right" }))
         button("Split down", () => this.create({ side: "down" }))
         button("Close panel", () => this.close()); button("Equalize", () => this.equalize())
         for (const kind of ["horizontal", "vertical", "grid"]) button(kind, () => this.arrange({ kind }))
         button("New workspace", () => this.workspaceCreate())
+        this.removeWorkspaceButton = button("Close workspace", () => this.workspaceRemove())
         this.workspaceSelect = document.createElement("select")
         this.workspaceSelect.setAttribute("aria-label", "Move panel to workspace"); this.toolbar.append(this.workspaceSelect)
         button("Move panel", () => this.moveToWorkspace({ workspace: this.workspaceSelect.value }))
@@ -502,6 +504,12 @@ export class UiLayout extends HTMLElement {
         })
     }
     workspaceSwitch({ id }) { return this.operation("switch-workspace", id) }
+    workspaceRemove({ id } = {}) {
+        return this.session.run(async () => {
+            this.requireReady()
+            return this.mutate("remove-workspace", [id === undefined ? this.session.snapshot["active-workspace"] : id])
+        })
+    }
     workspaceNext({ delta = 1 } = {}) {
         return this.session.run(async () => {
             this.requireReady()
@@ -593,6 +601,14 @@ export class UiLayout extends HTMLElement {
         }
     }
     renderWorkspaces(snapshot) {
+        const ids = new Set(snapshot.workspaces.map(workspace => workspace.id))
+        for (const [id, nodes] of this.workspaceNodes) {
+            if (ids.has(id)) continue
+            nodes.tab.remove()
+            nodes.panel.remove()
+            this.workspaceNodes.delete(id)
+        }
+        this.removeWorkspaceButton.disabled = snapshot.workspaces.length === 1
         for (const workspace of snapshot.workspaces) {
             let nodes = this.workspaceNodes.get(workspace.id)
             if (!nodes) {

@@ -127,6 +127,9 @@ pub(crate) enum Command {
     WorkspaceSwitch {
         id: String,
     },
+    WorkspaceRemove {
+        id: String,
+    },
     WorkspaceRename {
         id: String,
         name: String,
@@ -208,7 +211,8 @@ impl Command {
             Self::Close { id }
             | Self::Focus { id }
             | Self::Resize { id, .. }
-            | Self::WorkspaceSwitch { id } => {
+            | Self::WorkspaceSwitch { id }
+            | Self::WorkspaceRemove { id } => {
                 if !valid_id(id) {
                     return Err(fail("Invalid ID"));
                 }

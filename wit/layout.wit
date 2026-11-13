@@ -17,6 +17,7 @@ interface layout {
         insufficient-space,
         limit-exceeded,
         internal-error,
+        last-workspace,
     }
     record layout-error { code: error-code, message: string }
     record layout-config { gap: u32, min-width: u32, min-height: u32 }
@@ -102,6 +103,10 @@ interface layout {
     create-workspace: func(document: layout-document, id: string, name: string) -> result<layout-response, layout-error>;
     switch-workspace: func(document: layout-document, id: string) -> result<layout-response, layout-error>;
     rename-workspace: func(document: layout-document, id: string, name: string) -> result<layout-response, layout-error>;
+    /// Remove the workspace and all its panels. Reject the last workspace.
+    /// Removing the active workspace selects its previous neighbor, or the next
+    /// neighbor when removing the first; inactive removal keeps current focus.
+    remove-workspace: func(document: layout-document, id: string) -> result<layout-response, layout-error>;
     /// Transfer the panel without changing the active workspace.
     move-panel-to-workspace: func(document: layout-document, id: string, workspace: string) -> result<layout-response, layout-error>;
 }

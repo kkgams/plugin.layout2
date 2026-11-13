@@ -33,6 +33,13 @@ Runtime Session or UI client. Switching workspaces hides existing panel nodes;
 it does not destroy their Views. Closing removes a panel slot, not a Project
 or application process. Closing the last panel leaves an empty workspace.
 
+The separate **Close workspace** toolbar action closes the active workspace and
+all its panel Views; tabs remain navigation-only. The action is disabled for the
+last workspace, and the component also rejects that operation with
+`last-workspace`. Removing the active workspace selects the previous neighbor,
+or the next when removing the first, preserving that neighbor's remembered
+layout and focus. Removing an inactive workspace does not switch the active one.
+
 ## Component API
 
 The component exports **`gams:layout2/layout@0.2.0`**. Every operation has its own
@@ -80,6 +87,7 @@ Arguments below follow the required `document`, except for `initialize`.
 | `create-workspace` | `id: string`, `name: string`; create empty and activate |
 | `switch-workspace` | `id: string` |
 | `rename-workspace` | `id: string`, `name: string` |
+| `remove-workspace` | `id: string`; close all its panels, retaining at least one workspace |
 | `move-panel-to-workspace` | `id: string`, `workspace: string`; keep active workspace |
 
 `share` is the new/moved panel's fraction, strictly between zero and one. Divider

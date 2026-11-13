@@ -520,6 +520,20 @@ pub(crate) fn apply(s: &mut State, c: &Command) -> Result<()> {
             workspace_index(s, id)?;
             s.active_workspace = id.clone();
         }
+        Command::WorkspaceRemove { id } => {
+            let j = workspace_index(s, id)?;
+            if s.workspaces.len() == 1 {
+                return Err(Error::new(
+                    "last-workspace",
+                    "Cannot remove the last workspace",
+                ));
+            }
+            if s.active_workspace == *id {
+                let neighbor = if j > 0 { j - 1 } else { j + 1 };
+                s.active_workspace = s.workspaces[neighbor].id.clone();
+            }
+            s.workspaces.remove(j);
+        }
         Command::WorkspaceRename { id, name } => {
             let j = workspace_index(s, id)?;
             s.workspaces[j].name = name.clone();
