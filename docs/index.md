@@ -6,8 +6,31 @@ status: reference
 # BSP layouts and workspaces
 
 `plugin.layout2` owns a Rust geometry component and its paired browser UI
-Service. GAMS supplies the runtime, View registry, shared UI helpers and remaining
+Service for [GAMS](https://github.com/kkgams/gams). GAMS supplies the runtime, View registry, shared UI helpers and remaining
 UI Services. Projects select Views, theme and shortcuts through `gams.json`.
+
+## Included Units
+
+| Item | Source | ZIP entry | Screenshot |
+| --- | --- | --- | --- |
+| Rust BSP component | `src/*.rs`, `wit/layout.wit` | `plugin.layout2.wasm` | Not applicable |
+| Paired layout UI Service | `src/ui-plugins/layout2.js` | `ui-plugins/layout2.js` | Not yet captured |
+
+Install both entries from `plugin.layout2.zip` together.
+
+## Development
+
+Use the pinned toolchain through direnv or `nix develop --command`.
+
+| Command | Behavior |
+| --- | --- |
+| `make build` | Compile the WASIp2 component with embedded notices |
+| `make test` | Run native Rust and dependency-free JavaScript tests |
+| `make package` | Build `build.nosync/plugin.layout2.zip` and `SHA256SUMS` |
+| `make open` | Build and launch the local Project in the pinned released Host |
+| `make serve-docs DOCS_PORT=8082` | Preview this wiki independently |
+| `make docs` / `make validate-docs` | Build / validate the pinned wiki |
+| `make clean` | Remove generated `build.nosync/`, downloaded Host/notices and currently configured Unit downloads; preserve unrelated Units |
 
 ## Try the local Project
 
@@ -146,11 +169,3 @@ Project Save uses the Host's existing ordered save hooks and config publication.
 BSP and named workspaces are implemented first. Floating windows, tiled/floating
 mode conversion, animations, PTYs and terminal rendering are outside this slice.
 The existing layout component/service and their configured consumers are unchanged.
-
-## Source and licensing
-
-The algorithm reference is TUIOS commit
-`a086dffc310597c5bf675512384bfbdb4acc55de`. Its original MIT terms remain in
-`licenses/TUIOS-MIT.txt`. The Rust component and paired UI Service are authored
-under Apache-2.0. Packaging retains dependency license texts and embeds complete
-notices in the WASM component.

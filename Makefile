@@ -24,7 +24,6 @@ export XDG_CACHE_HOME := $(abspath build.nosync/cache)
 export PYTHONPYCACHEPREFIX := $(abspath build.nosync/pycache)
 
 RUST_SOURCES := $(wildcard src/*.rs)
-UI_SOURCES := $(wildcard src/ui-plugins/*.js)
 WIT_SOURCES := $(wildcard wit/*.wit)
 
 .PHONY: build test package open clean docs serve-docs validate-docs
@@ -48,8 +47,11 @@ build.nosync/plugin.layout2.wasm: build.nosync/gams_layout2.wasm build.nosync/NO
 	$(PYTHON) scripts/embed-notices.py build.nosync/layout2.stripped.wasm "$@"
 	$(WASM_TOOLS) validate "$@"
 
-build.nosync/plugin.layout2.zip: build.nosync/plugin.layout2.wasm build.nosync/NOTICE $(UI_SOURCES) src/ui-plugins LICENSE README.md scripts/package.py Makefile
-	$(PYTHON) scripts/package.py "$@"
+build.nosync/plugin.layout2.zip: build.nosync/plugin.layout2.wasm build.nosync/NOTICE src/ui-plugins/layout2.js LICENSE README.md licenses/TUIOS-MIT.txt Makefile
+	rm -f "$@"
+	cd build.nosync && zip -q -X plugin.layout2.zip plugin.layout2.wasm NOTICE
+	cd ../src && zip -q -X ../build.nosync/plugin.layout2.zip ui-plugins/layout2.js
+	cd .. && zip -q -X build.nosync/plugin.layout2.zip LICENSE README.md licenses/TUIOS-MIT.txt
 
 build.nosync/SHA256SUMS: build.nosync/plugin.layout2.zip
 	cd build.nosync && shasum -a 256 plugin.layout2.zip > SHA256SUMS

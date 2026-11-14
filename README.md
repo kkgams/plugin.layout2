@@ -1,12 +1,20 @@
 # BSP layouts for GAMS
 
-A Rust BSP layout component paired with its browser UI Service. Workspaces have
+A Rust BSP layout component paired with its browser UI Service for
+[GAMS](https://github.com/kkgams/gams). Workspaces have
 independent trees and focus; moving or resizing panels preserves their Views.
 Floating windows are not implemented in this first slice.
 
 The component exposes individual typed functions through `gams:layout2/layout@0.2.0`,
 not a JSON-string dispatcher. The paired service and component must be updated
 together; existing saved version-1 layouts convert on load.
+
+## Included Units
+
+| Item | Source / ZIP entry | Screenshot | License / original work |
+| --- | --- | --- | --- |
+| BSP component | `src/*.rs`, `wit/layout.wit` → `plugin.layout2.wasm` | Not applicable | [Apache-2.0](LICENSE); algorithm reference: [TUIOS / Gaurav Gosain](https://github.com/Gaurav-Gosain/tuios), [MIT](licenses/TUIOS-MIT.txt) |
+| Paired layout UI Service | `src/ui-plugins/layout2.js` → `ui-plugins/layout2.js` | Not yet captured | [Apache-2.0](LICENSE), kkgams contributors |
 
 ## Try it
 
@@ -70,7 +78,8 @@ paths; it preserves authored files and unrelated installed Units.
 The ZIP contains the component, `ui-plugins/layout2.js`, README and licenses.
 Install both entries together: the service is not compatible with the old
 `plugin.layout` interface. This repository does not replace either existing Unit.
-No remote, tag, release or publication is configured by local development.
+Local commands do not tag or publish. Release assets use stable names:
+`plugin.layout2.zip` and `SHA256SUMS`.
 
 See [the typed API and document contract](docs/index.md). Apache-2.0 for authored code;
 TUIOS MIT attribution and original terms are retained in `licenses/TUIOS-MIT.txt`.
