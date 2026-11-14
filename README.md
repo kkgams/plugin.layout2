@@ -28,7 +28,7 @@ nix develop --command make open
 ```
 
 `make open` builds the component and launches this checkout's `gams.json` in
-`tools/gams.app`. It downloads the pinned macOS Apple Silicon GAMS v3.1.1 Host
+`tools/gams.app`. It downloads the pinned macOS Apple Silicon GAMS v3.2.0 Host
 when absent, verifies its published checksum and keeps the accompanying notices.
 Existing downloads are never updated implicitly; macOS security checks remain
 in effect. Other systems can load this Project with their installed GAMS Host.
