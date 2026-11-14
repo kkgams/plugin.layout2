@@ -28,7 +28,7 @@ nix develop --command make open
 ```
 
 `make open` builds the component and launches this checkout's `gams.json` in
-`tools/gams.app`. It downloads the pinned macOS Apple Silicon GAMS v3.0.0 Host
+`tools/gams.app`. It downloads the pinned macOS Apple Silicon GAMS v3.1.1 Host
 when absent, verifies its published checksum and keeps the accompanying notices.
 Existing downloads are never updated implicitly; macOS security checks remain
 in effect. Other systems can load this Project with their installed GAMS Host.
@@ -68,7 +68,7 @@ all resizing respects nested panel minimum sizes without recreating Views.
 | `make package` | `build.nosync/plugin.layout2.zip` and `SHA256SUMS` |
 | `make open` | Build and open this local Project in the released Host |
 | `make serve-docs DOCS_PORT=8082` | Independent documentation preview |
-| `make docs` / `make validate-docs` | Build / validate with pinned justgook/wiki v1.6.0 |
+| `make docs` / `make validate-docs` | Build / validate with pinned justgook/wiki v1.8.0 |
 | `make clean` | Remove declared generated output, downloaded Host and currently configured Unit downloads |
 
 Builds, Cargo caches, temporary files and generated documentation stay under
