@@ -367,26 +367,27 @@ export class UiLayout extends HTMLElement {
         this.toolbar = document.createElement("nav")
         this.toolbar.setAttribute("aria-label", "Layout actions"); this.toolbar.setAttribute("role", "buttongroup")
         this.toolbar.style.cssText = "display:flex;flex-shrink:0;overflow:auto"
-        const button = (text, action) => {
-            const node = document.createElement("button")
-            node.type = "button"; node.textContent = text
+        const button = (label, icon, action) => {
+            const node = document.createElement("button"), symbol = document.createElement("i")
+            node.type = "button"; node.setAttribute("aria-label", label); node.title = label
+            symbol.setAttribute("aria-hidden", "true"); symbol.textContent = icon; node.append(symbol)
             node.addEventListener("click", () => { void action() }); this.toolbar.append(node)
             return node
         }
-        button("Split right", () => this.create({ side: "right" }))
-        button("Split down", () => this.create({ side: "down" }))
-        button("Close panel", () => this.close()); button("Equalize", () => this.equalize())
-        for (const kind of ["horizontal", "vertical", "grid"]) button(kind, () => this.arrange({ kind }))
-        button("New workspace", () => this.workspaceCreate())
-        this.removeWorkspaceButton = button("Close workspace", () => this.workspaceRemove())
+        button("Split right", "vertical_split", () => this.create({ side: "right" }))
+        button("Split down", "horizontal_split", () => this.create({ side: "down" }))
+        button("Close panel", "close", () => this.close()); button("Equalize", "balance", () => this.equalize())
+        for (const [kind, label, icon] of [["horizontal", "Arrange horizontally", "view_column"], ["vertical", "Arrange vertically", "table_rows"], ["grid", "Arrange as grid", "grid_view"]]) button(label, icon, () => this.arrange({ kind }))
+        button("New workspace", "add_box", () => this.workspaceCreate())
+        this.removeWorkspaceButton = button("Close workspace", "tab_close", () => this.workspaceRemove())
         this.workspaceSelect = document.createElement("select")
         this.workspaceSelect.setAttribute("aria-label", "Move panel to workspace"); this.toolbar.append(this.workspaceSelect)
-        button("Move panel", () => this.moveToWorkspace({ workspace: this.workspaceSelect.value }))
+        button("Move panel", "drive_file_move", () => this.moveToWorkspace({ workspace: this.workspaceSelect.value }))
         this.renameInput = document.createElement("input"); this.renameInput.type = "text"
         this.renameInput.setAttribute("aria-label", "Workspace name")
         for (const name of ["autocomplete", "autocorrect", "autocapitalize"]) this.renameInput.setAttribute(name, "off")
         this.renameInput.spellcheck = false; this.toolbar.append(this.renameInput)
-        button("Rename workspace", () => this.workspaceRename({ name: this.renameInput.value }))
+        button("Rename workspace", "edit", () => this.workspaceRename({ name: this.renameInput.value }))
         this.tabs = document.createElement("nav")
         this.tabs.setAttribute("role", "tablist"); this.tabs.setAttribute("aria-label", "Workspaces"); this.tabs.style.flexShrink = "0"
         this.viewport = document.createElement("section")
