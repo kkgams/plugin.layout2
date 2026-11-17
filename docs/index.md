@@ -30,7 +30,7 @@ Use the pinned toolchain through direnv or `nix develop --command`.
 | `make open` | Build and launch the local Project in the pinned released Host |
 | `make serve-docs DOCS_PORT=8082` | Preview this wiki independently |
 | `make docs` / `make validate-docs` | Build / validate the pinned wiki |
-| `make clean` | Remove generated `build.nosync/`, downloaded Host/notices and currently configured Unit downloads; preserve unrelated Units |
+| `make clean` | Remove all of `build.nosync/`, `tools/` and `gams_modules/`, including unmarked contents; refuse tracked files and symlinks before deleting anything. |
 
 ## Try the local Project
 

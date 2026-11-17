@@ -69,11 +69,12 @@ all resizing respects nested panel minimum sizes without recreating Views.
 | `make open` | Build and open this local Project in the released Host |
 | `make serve-docs DOCS_PORT=8082` | Independent documentation preview |
 | `make docs` / `make validate-docs` | Build / validate with pinned justgook/wiki v1.8.0 |
-| `make clean` | Remove declared generated output, downloaded Host and currently configured Unit downloads |
+| `make clean` | Remove all of `build.nosync/`, `tools/` and `gams_modules/`, including unmarked contents; refuse tracked files and symlinks before deleting anything. |
 
 Builds, Cargo caches, temporary files and generated documentation stay under
-ignored `build.nosync/`. Clean refuses tracked files and symlinks in deletion
-paths; it preserves authored files and unrelated installed Units.
+ignored `build.nosync/`. Clean checks all deletion paths for tracked files and
+symlinks before removing anything. No ownership or resource markers are required;
+other paths are untouched.
 
 The ZIP contains the component, `ui-plugins/layout2.js`, README and licenses.
 Install both entries together: the service is not compatible with the old
