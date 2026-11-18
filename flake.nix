@@ -5,19 +5,24 @@
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
   };
-  outputs = { nixpkgs, rust-overlay, ... }:
-    let
-      systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
-      each = nixpkgs.lib.genAttrs systems;
+  outputs = {
+    nixpkgs,
+    rust-overlay,
+    ...
+  }: let
+    systems = ["aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux"];
+    each = nixpkgs.lib.genAttrs systems;
+  in {
+    devShells = each (system: let
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [rust-overlay.overlays.default];
+      };
+      rust = pkgs.rust-bin.stable."1.94.1".default.override {targets = ["wasm32-wasip2"];};
     in {
-      devShells = each (system:
-        let
-          pkgs = import nixpkgs { inherit system; overlays = [ rust-overlay.overlays.default ]; };
-          rust = pkgs.rust-bin.stable."1.94.1".default.override { targets = [ "wasm32-wasip2" ]; };
-        in {
-          default = pkgs.mkShell {
-            packages = [ rust pkgs.gnumake pkgs.python3 pkgs.nodejs_24 pkgs.curl pkgs.unzip pkgs.zip pkgs.wasm-tools ];
-          };
-        });
-    };
+      default = pkgs.mkShell {
+        packages = [rust pkgs.gnumake pkgs.python3 pkgs.nodejs_24 pkgs.curl pkgs.unzip pkgs.zip pkgs.wasm-tools];
+      };
+    });
+  };
 }
